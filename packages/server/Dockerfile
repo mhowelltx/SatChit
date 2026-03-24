@@ -38,7 +38,7 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/server/package.json ./packages/server/
 COPY prisma ./prisma/
 
-RUN pnpm install --frozen-lockfile --prod
+RUN pnpm install --frozen-lockfile
 
 # Generate Prisma client for production (call binary directly to avoid pnpm workspace recursion)
 RUN node_modules/.bin/prisma generate
