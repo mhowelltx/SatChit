@@ -32,24 +32,15 @@ RUN pnpm --filter @satchit/web build
 # ── Stage 2: Production ───────────────────────────────────────────────────────
 FROM node:20-alpine AS production
 
-RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
-
 WORKDIR /app
 
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-COPY packages/shared/package.json ./packages/shared/
-COPY packages/web/package.json ./packages/web/
-
-RUN pnpm install --frozen-lockfile --prod --filter @satchit/web
-
-COPY --from=builder /app/packages/shared/dist ./packages/shared/dist/
-COPY --from=builder /app/packages/web/.next ./packages/web/.next/
-COPY --from=builder /app/packages/web/next.config.ts ./packages/web/
+# Standalone output bundles all required node_modules — no pnpm install needed.
+COPY --from=builder /app/packages/web/.next/standalone ./
+COPY --from=builder /app/packages/web/.next/static ./packages/web/.next/static/
 
 EXPOSE 3000
 
 ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
 
-WORKDIR /app/packages/web
-
-CMD ["sh", "-c", "node /app/node_modules/next/dist/bin/next start -p ${PORT:-3000}"]
+CMD ["sh", "-c", "PORT=${PORT:-3000} node packages/web/server.js"]
