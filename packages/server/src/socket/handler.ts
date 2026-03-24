@@ -46,7 +46,11 @@ export function registerSocketHandlers(
           return;
         }
 
-        const session = await sessionService.create(world.id, playerId);
+        // Fall back to world creator when auth is not yet implemented
+        const resolvedPlayerId =
+          playerId && playerId !== 'placeholder-player-id' ? playerId : world.creatorId;
+
+        const session = await sessionService.create(world.id, resolvedPlayerId);
         activeSessionId = session.id;
         activeWorldId = world.id;
 
@@ -57,7 +61,7 @@ export function registerSocketHandlers(
         if (startZone) {
           activeZoneSlug = startZone.slug;
           await sessionService.updateZone(session.id, startZone.id);
-          socket.join(zoneRoom(worldId, startZone.slug));
+          socket.join(zoneRoom(world.id, startZone.slug));
 
           socket.emit('world:narration', {
             text: startZone.rawContent,
@@ -67,9 +71,9 @@ export function registerSocketHandlers(
           });
 
           // Notify others in zone
-          const user = await prisma.user.findUnique({ where: { id: playerId } });
-          socket.to(zoneRoom(worldId, startZone.slug)).emit('player:joined', {
-            playerId,
+          const user = await prisma.user.findUnique({ where: { id: resolvedPlayerId } });
+          socket.to(zoneRoom(world.id, startZone.slug)).emit('player:joined', {
+            playerId: resolvedPlayerId,
             username: user?.username ?? 'Unknown',
             zoneSlug: startZone.slug,
           });
