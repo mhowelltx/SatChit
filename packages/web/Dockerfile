@@ -50,4 +50,6 @@ EXPOSE 3000
 
 ENV NODE_ENV=production
 
-CMD ["pnpm", "--filter", "@satchit/web", "run", "start"]
+WORKDIR /app/packages/web
+
+CMD ["sh", "-c", "node /app/node_modules/next/dist/bin/next start -p ${PORT:-3000}"]
