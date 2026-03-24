@@ -35,12 +35,13 @@ FROM node:20-alpine AS production
 WORKDIR /app
 
 # Standalone output bundles all required node_modules — no pnpm install needed.
+# In a monorepo, server.js lands at packages/web/server.js inside the standalone dir.
 COPY --from=builder /app/packages/web/.next/standalone ./
-COPY --from=builder /app/packages/web/.next/static ./.next/static/
+COPY --from=builder /app/packages/web/.next/static ./packages/web/.next/static/
 
 EXPOSE 3000
 
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 
-CMD ["sh", "-c", "PORT=${PORT:-3000} node server.js"]
+CMD ["sh", "-c", "PORT=${PORT:-3000} node packages/web/server.js"]
