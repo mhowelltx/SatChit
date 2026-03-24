@@ -34,6 +34,12 @@ async function main() {
   // ── 2. The Verdant Accord (proto world) ───────────────────────────────────
   console.log('\n[The Verdant Accord]');
   const verdantSlug = slugify('The Verdant Accord', { lower: true, strict: true });
+  const anthropicApiKey = process.env.ANTHROPIC_API_KEY ?? null;
+  if (anthropicApiKey) {
+    console.log('  Using ANTHROPIC_API_KEY from environment');
+  } else {
+    console.log('  No ANTHROPIC_API_KEY set — world will use stub AI');
+  }
 
   const verdant = await prisma.world.upsert({
     where: { slug: verdantSlug },
@@ -58,8 +64,9 @@ async function main() {
         'The Cultivators — stewards bonded to specific regions, entering into a wordless covenant with the land to tend, protect, and converse with it',
         'The Harmonists — musicians and composers who believe the world has a fundamental resonant note and dedicate their lives to hearing it and adding to it',
       ],
+      anthropicApiKey,
     },
-    update: {},
+    update: { anthropicApiKey },
   });
   console.log(`World: ${verdant.name} (id: ${verdant.id})`);
 
