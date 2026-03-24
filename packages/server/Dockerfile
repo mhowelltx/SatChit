@@ -40,11 +40,12 @@ COPY prisma ./prisma/
 
 RUN pnpm install --frozen-lockfile --prod
 
+# Generate Prisma client for production (pnpm stores it in .pnpm, not .prisma)
+RUN pnpm exec prisma generate
+
 # Copy compiled output from builder
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist/
 COPY --from=builder /app/packages/server/dist ./packages/server/dist/
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma/
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma/
 
 EXPOSE 3001
 
