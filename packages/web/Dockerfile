@@ -37,10 +37,12 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
 
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/shared/package.json ./packages/shared/
 COPY packages/web/package.json ./packages/web/
 
 RUN pnpm install --frozen-lockfile --prod --filter @satchit/web
 
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist/
 COPY --from=builder /app/packages/web/.next ./packages/web/.next/
 COPY --from=builder /app/packages/web/next.config.ts ./packages/web/
 
