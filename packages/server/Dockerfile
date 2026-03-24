@@ -37,6 +37,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/server/package.json ./packages/server/
 COPY prisma ./prisma/
+COPY scripts ./scripts/
 
 RUN pnpm install --frozen-lockfile
 
@@ -51,4 +52,4 @@ EXPOSE 3001
 
 ENV NODE_ENV=production
 
-CMD ["sh", "-c", "node_modules/.bin/prisma db push --skip-generate && node packages/server/dist/index.js"]
+CMD ["sh", "-c", "node_modules/.bin/prisma db push --skip-generate && node_modules/.bin/tsx scripts/seed.ts && node packages/server/dist/index.js"]
