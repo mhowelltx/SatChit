@@ -48,4 +48,4 @@ EXPOSE 3000
 
 ENV NODE_ENV=production
 
-CMD ["sh", "-c", "pnpm --filter @satchit/web exec next start -p ${PORT:-3000}"]
+CMD ["pnpm", "--filter", "@satchit/web", "run", "start"]
