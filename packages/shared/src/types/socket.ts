@@ -4,6 +4,7 @@ import type { VedaZone, VedaEntity, VedaEvent, VedaLore } from './veda.js';
 
 export interface SessionJoinPayload {
   worldId: string;
+  worldSlug?: string;
   playerId: string;
 }
 

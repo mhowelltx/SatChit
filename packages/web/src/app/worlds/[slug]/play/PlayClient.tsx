@@ -56,7 +56,8 @@ export default function PlayClient({ worldSlug }: PlayClientProps) {
       addLog({ type: 'system', text: 'Connected to server. Entering world…', timestamp: new Date().toISOString() });
 
       socket.emit('session:join', {
-        worldId: PLACEHOLDER_WORLD_ID,
+        worldId: '',
+        worldSlug,
         playerId: PLACEHOLDER_PLAYER_ID,
       });
     });

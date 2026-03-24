@@ -36,17 +36,19 @@ export function registerSocketHandlers(
 
     socket.on('session:join', async (payload: SessionJoinPayload) => {
       try {
-        const { worldId, playerId } = payload;
+        const { worldId, worldSlug, playerId } = payload;
 
-        const world = await prisma.world.findUnique({ where: { id: worldId } });
+        const world = worldSlug
+          ? await prisma.world.findUnique({ where: { slug: worldSlug } })
+          : await prisma.world.findUnique({ where: { id: worldId } });
         if (!world) {
           socket.emit('session:error', { code: 'WORLD_NOT_FOUND', message: 'World not found.' });
           return;
         }
 
-        const session = await sessionService.create(worldId, playerId);
+        const session = await sessionService.create(world.id, playerId);
         activeSessionId = session.id;
-        activeWorldId = worldId;
+        activeWorldId = world.id;
 
         // Place player in the first available starter zone
         const zones = await vedaService.listZones(worldId);
