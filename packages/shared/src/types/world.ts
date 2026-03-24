@@ -9,6 +9,7 @@ export interface World {
   visibility: WorldVisibility;
   foundationalLaws: string[];
   culturalTypologies: string[];
+  anthropicApiKey?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

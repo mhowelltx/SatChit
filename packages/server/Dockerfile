@@ -51,4 +51,4 @@ EXPOSE 3001
 
 ENV NODE_ENV=production
 
-CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy && node packages/server/dist/index.js"]
+CMD ["sh", "-c", "node_modules/.bin/prisma db push --skip-generate && node packages/server/dist/index.js"]

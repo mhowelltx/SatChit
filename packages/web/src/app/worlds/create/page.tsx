@@ -10,6 +10,7 @@ export default function CreateWorldPage() {
   const [visibility, setVisibility] = useState<'PUBLIC' | 'PRIVATE'>('PUBLIC');
   const [laws, setLaws] = useState(['']);
   const [cultures, setCultures] = useState(['']);
+  const [anthropicApiKey, setAnthropicApiKey] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -56,6 +57,7 @@ export default function CreateWorldPage() {
           visibility,
           foundationalLaws: filteredLaws,
           culturalTypologies: filteredCultures,
+          anthropicApiKey: anthropicApiKey.trim() || undefined,
           // TODO: replace with authenticated user id
           creatorId: 'placeholder-creator-id',
         }),
@@ -200,6 +202,21 @@ export default function CreateWorldPage() {
           >
             + Add culture
           </button>
+        </div>
+
+        <div>
+          <label style={labelStyle}>Anthropic API Key <span style={{ color: 'var(--text-muted)' }}>(optional)</span></label>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: 0, marginBottom: '0.75rem' }}>
+            Provide your own key to power this world with Claude. Without one, the world uses the server's default AI (stub mode).
+          </p>
+          <input
+            style={fieldStyle}
+            type="password"
+            value={anthropicApiKey}
+            onChange={(e) => setAnthropicApiKey(e.target.value)}
+            placeholder="sk-ant-..."
+            autoComplete="off"
+          />
         </div>
 
         {error && (

@@ -2,6 +2,7 @@ import slugify from 'slugify';
 import type { PrismaClient } from '@prisma/client';
 import type { World, VedaZone } from '@satchit/shared';
 import type { IAIProvider } from '../ai/index.js';
+import { AnthropicProvider } from '../ai/providers/anthropic.js';
 import { VedaService } from './VedaService.js';
 
 interface BootstrapResult {
@@ -25,6 +26,13 @@ export class WorldGeneratorService {
     this.vedaService = new VedaService(prisma);
   }
 
+  private providerFor(world: World): IAIProvider {
+    if (world.anthropicApiKey) {
+      return new AnthropicProvider(world.anthropicApiKey);
+    }
+    return this.ai;
+  }
+
   /**
    * Bootstrap a newly created world: generate an origin summary and
    * 1–3 starter zones to give players somewhere to begin.
@@ -41,8 +49,10 @@ export class WorldGeneratorService {
       worldLore,
     };
 
+    const ai = this.providerFor(world);
+
     // Generate origin summary
-    const originSummary = await this.ai.generate(
+    const originSummary = await ai.generate(
       `Write a vivid, 2-paragraph origin summary for the world of "${world.name}".
        This will be the first thing players see when they discover this world.
        Hint at mysteries, cultures, and the laws that shape existence here.`,
@@ -60,7 +70,7 @@ export class WorldGeneratorService {
       ],
     };
 
-    const generated = await this.ai.generateStructured(
+    const generated = await ai.generateStructured(
       `Create exactly 2 starting zones for the world of "${world.name}".
        These should feel distinct from each other and organically reflect the world's laws and cultures.`,
       context,
@@ -110,6 +120,8 @@ export class WorldGeneratorService {
     const worldLore = await this.vedaService.listLore(world.id);
     const nearbyZones = await this.vedaService.listZones(world.id);
 
+    const ai = this.providerFor(world);
+
     const context = {
       world: {
         name: world.name,
@@ -130,7 +142,7 @@ export class WorldGeneratorService {
         .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
         .join(' ');
 
-      const rawContent = await this.ai.generate(
+      const rawContent = await ai.generate(
         `The player has arrived in "${zoneName}" for the first time.
          Describe this location in vivid detail — what they see, hear, feel, and sense.
          Make it feel like a natural part of ${world.name}.`,
@@ -148,7 +160,7 @@ export class WorldGeneratorService {
     }
 
     // Generate narration for the player's specific action in this zone
-    const narration = await this.ai.generate(
+    const narration = await ai.generate(
       `The player is in "${zone!.name}" and does the following: "${playerInput}".
        Narrate what happens, staying true to the world's laws and the zone's established details.`,
       { ...context, currentZone: zone },

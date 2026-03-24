@@ -50,6 +50,7 @@ model World {
   visibility          WorldVisibility @default(PUBLIC)
   foundationalLaws    String[]
   culturalTypologies  String[]
+  anthropicApiKey     String?
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 

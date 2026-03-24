@@ -48,7 +48,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
   // Create a new world
   router.post('/', async (req, res) => {
     try {
-      const { name, description, visibility, foundationalLaws, culturalTypologies, creatorId } =
+      const { name, description, visibility, foundationalLaws, culturalTypologies, creatorId, anthropicApiKey } =
         req.body as {
           name: string;
           description: string;
@@ -56,6 +56,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
           foundationalLaws: string[];
           culturalTypologies: string[];
           creatorId: string;
+          anthropicApiKey?: string;
         };
 
       if (!name || !description || !foundationalLaws?.length || !culturalTypologies?.length) {
@@ -79,6 +80,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
           visibility: visibility ?? 'PUBLIC',
           foundationalLaws,
           culturalTypologies,
+          anthropicApiKey: anthropicApiKey?.trim() || null,
         },
       });
 
@@ -92,6 +94,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
         visibility: world.visibility as 'PUBLIC' | 'PRIVATE',
         foundationalLaws: world.foundationalLaws,
         culturalTypologies: world.culturalTypologies,
+        anthropicApiKey: world.anthropicApiKey,
         createdAt: world.createdAt,
         updatedAt: world.updatedAt,
       });
