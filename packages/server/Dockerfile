@@ -23,8 +23,8 @@ COPY packages/server/src ./packages/server/src/
 RUN pnpm --filter @satchit/shared build
 RUN pnpm --filter @satchit/server build
 
-# Generate Prisma client
-RUN pnpm exec prisma generate
+# Generate Prisma client (call binary directly to avoid pnpm workspace recursion)
+RUN node_modules/.bin/prisma generate
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
 FROM node:20-alpine AS production
@@ -40,8 +40,8 @@ COPY prisma ./prisma/
 
 RUN pnpm install --frozen-lockfile --prod
 
-# Generate Prisma client for production (pnpm stores it in .pnpm, not .prisma)
-RUN pnpm exec prisma generate
+# Generate Prisma client for production (call binary directly to avoid pnpm workspace recursion)
+RUN node_modules/.bin/prisma generate
 
 # Copy compiled output from builder
 COPY --from=builder /app/packages/shared/dist ./packages/shared/dist/
