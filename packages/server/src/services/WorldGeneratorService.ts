@@ -77,6 +77,7 @@ export class WorldGeneratorService {
 
     const starterZones: VedaZone[] = [];
     for (const def of zoneDefs) {
+      // @ts-ignore: slugify CJS/ESM interop issue with NodeNext
       const slug = slugify(def.name, { lower: true, strict: true });
       const zone = await this.vedaService.saveZone({
         worldId: world.id,

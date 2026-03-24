@@ -62,6 +62,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
         return res.status(400).json({ error: 'Missing required fields.' });
       }
 
+      // @ts-ignore: slugify CJS/ESM interop issue with NodeNext
       const slug = slugify(name, { lower: true, strict: true });
 
       const existing = await prisma.world.findUnique({ where: { slug } });

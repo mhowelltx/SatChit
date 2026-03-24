@@ -157,6 +157,7 @@ export function registerSocketHandlers(
         const world = await prisma.world.findUnique({ where: { id: activeWorldId } });
         if (!world) return;
 
+        // @ts-ignore: slugify CJS/ESM interop issue with NodeNext
         const targetSlug = slugify(payload.targetZoneSlug, { lower: true, strict: true });
         const fromSlug = activeZoneSlug;
         const user = await prisma.user.findUnique({ where: { id: session.playerId } });
