@@ -10,7 +10,7 @@ import { createWorldsRouter } from './routes/worlds.js';
 import { createAuthRouter } from './routes/auth.js';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
-const CLIENT_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3000';
+const CLIENT_URL = process.env.CLIENT_URL ?? 'http://localhost:3000';
 
 async function main() {
   const prisma = new PrismaClient();
