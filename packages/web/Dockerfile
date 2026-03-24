@@ -36,11 +36,11 @@ WORKDIR /app
 
 # Standalone output bundles all required node_modules — no pnpm install needed.
 COPY --from=builder /app/packages/web/.next/standalone ./
-COPY --from=builder /app/packages/web/.next/static ./packages/web/.next/static/
+COPY --from=builder /app/packages/web/.next/static ./.next/static/
 
 EXPOSE 3000
 
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 
-CMD ["sh", "-c", "PORT=${PORT:-3000} node packages/web/server.js"]
+CMD ["sh", "-c", "PORT=${PORT:-3000} node server.js"]
