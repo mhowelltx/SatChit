@@ -51,7 +51,7 @@ export function registerSocketHandlers(
         activeWorldId = world.id;
 
         // Place player in the first available starter zone
-        const zones = await vedaService.listZones(worldId);
+        const zones = await vedaService.listZones(world.id);
         const startZone = zones[0];
 
         if (startZone) {
