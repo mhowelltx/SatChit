@@ -110,7 +110,7 @@ export default function CreateWorldPage() {
             style={fieldStyle}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. The Ember Lattice"
+            placeholder="e.g. The Verdant Accord"
             required
           />
         </div>
