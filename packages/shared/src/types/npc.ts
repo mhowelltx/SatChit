@@ -1,5 +1,15 @@
 export type NPCDisposition = 'friendly' | 'neutral' | 'wary' | 'hostile' | 'unknown';
 
+export interface NPCRelationship {
+  id: string;
+  worldId: string;
+  npcId: string;
+  playerId: string;
+  score: number; // -100 (hostile) to +100 (devoted)
+  notes: string[];
+  lastInteraction: Date;
+}
+
 export interface NPC {
   id: string;
   worldId: string;

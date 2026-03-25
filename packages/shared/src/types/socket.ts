@@ -22,11 +22,23 @@ export interface PlayerMovePayload {
 
 // ── Server → Client ──────────────────────────────────────────────────────────
 
+/** Identifies a named entity in narration text for colour-coding in the client */
+export interface NameMention {
+  name: string;
+  type: 'npc' | 'pc' | 'rishi';
+}
+
 export interface NarrationPayload {
   text: string;
   zoneSlug: string;
   sessionId: string;
   timestamp: string;
+  /** Suggested player actions generated after this narration */
+  suggestions?: string[];
+  /** Named entities present in the narration, for colour-coded display */
+  mentions?: NameMention[];
+  /** Atmosphere/mood tags for the current zone */
+  atmosphereTags?: string[];
 }
 
 export interface PlayerMovedPayload {

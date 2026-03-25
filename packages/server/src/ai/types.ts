@@ -6,6 +6,18 @@ export interface GenerationContext {
   nearbyZones?: VedaZone[];
   worldLore?: VedaLore[];
   playerInput?: string;
+  /** How many messages have been sent in the current zone this session (0-indexed). */
+  zoneMessageCount?: number;
+  /** Total actions taken in this session — used for narrative tension pacing. */
+  sessionActionCount?: number;
+  /** Brief summaries of past events in this zone for the current player. */
+  zoneHistory?: string[];
+  /** Carried ambient mood/tone from the previous narration, e.g. "tense", "melancholy". */
+  currentMood?: string;
+  /** Atmosphere tags for the current zone, e.g. ["eerie", "fog-shrouded"]. */
+  atmosphereTags?: string[];
+  /** NPC name → relationship score (-100 hostile … +100 devoted) for this player. */
+  npcRelationships?: Record<string, number>;
 }
 
 export interface IAIProvider {

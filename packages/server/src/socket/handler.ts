@@ -6,6 +6,7 @@ import type {
   SessionJoinPayload,
   PlayerActionPayload,
   PlayerMovePayload,
+  NameMention,
 } from '@satchit/shared';
 import type { IAIProvider } from '../ai/index.js';
 import { AnthropicAPIError } from '../ai/providers/anthropic.js';
@@ -42,6 +43,21 @@ export function registerSocketHandlers(
     let activeZoneSlug: string | null = null;
     let activeCharacterId: string | null = null;
 
+    // ── New per-socket state for enhanced features ───────────────────────────
+    /** Message count per zone slug — resets implicitly when moving to unseen zone */
+    const zoneMessageCounts = new Map<string, number>();
+    /** Total player actions in this session — drives narrative tension */
+    let sessionActionCount = 0;
+    /** Carried ambient mood from last narration */
+    let currentMood: string | undefined;
+    /** Recent zone slugs for breadcrumb trail (newest last) */
+    const recentZones: string[] = [];
+    /** Whether this player is a Rishi (cross-world avatar) */
+    let isRishi = false;
+    let rishiName: string | null = null;
+    /** Resolved player ID once session is joined */
+    let resolvedPlayerId: string | null = null;
+
     socket.on('session:join', async (payload: SessionJoinPayload) => {
       try {
         const { worldId, worldSlug, playerId, characterId, targetZoneSlug } = payload;
@@ -55,8 +71,16 @@ export function registerSocketHandlers(
         }
 
         // Fall back to world creator when auth is not yet implemented
-        const resolvedPlayerId =
+        resolvedPlayerId =
           playerId && playerId !== 'placeholder-player-id' ? playerId : world.creatorId;
+
+        // Check if this player is a Rishi (has an AvatarCharacter record)
+        const avatarCharacter = await prisma.avatarCharacter.findUnique({
+          where: { userId: resolvedPlayerId },
+          select: { name: true },
+        });
+        isRishi = avatarCharacter !== null;
+        rishiName = avatarCharacter?.name ?? null;
 
         // Optionally resolve character
         const character = characterId
@@ -68,7 +92,7 @@ export function registerSocketHandlers(
         activeSessionId = session.id;
         activeWorldId = world.id;
 
-        // Resolve start zone: use targetZoneSlug if provided (Rishi avatar join), else first zone
+        // Resolve start zone
         const zones = await vedaService.listZones(world.id);
         const startZone = targetZoneSlug
           ? (zones.find(z => z.slug === targetZoneSlug) ?? zones[0])
@@ -78,12 +102,14 @@ export function registerSocketHandlers(
           activeZoneSlug = startZone.slug;
           await sessionService.updateZone(session.id, startZone.id);
           socket.join(zoneRoom(world.id, startZone.slug));
+          _trackRecentZone(startZone.slug);
 
           socket.emit('world:narration', {
             text: startZone.rawContent,
             zoneSlug: startZone.slug,
             sessionId: session.id,
             timestamp: new Date().toISOString(),
+            atmosphereTags: startZone.atmosphereTags,
           });
 
           // Notify others in zone
@@ -119,6 +145,11 @@ export function registerSocketHandlers(
         const world = await prisma.world.findUnique({ where: { id: activeWorldId } });
         if (!world) return;
 
+        // Capture prior count BEFORE incrementing (so first message = 0)
+        const priorZoneCount = zoneMessageCounts.get(activeZoneSlug) ?? 0;
+        zoneMessageCounts.set(activeZoneSlug, priorZoneCount + 1);
+        sessionActionCount += 1;
+
         const result = await worldGenerator.processAction(
           {
             id: world.id,
@@ -135,24 +166,42 @@ export function registerSocketHandlers(
           },
           activeZoneSlug,
           payload.input,
-          session.playerId,
+          resolvedPlayerId ?? session.playerId,
           activeCharacterId ? await prisma.character.findUnique({ where: { id: activeCharacterId } }) as any : null,
+          priorZoneCount,
+          sessionActionCount,
+          currentMood,
         );
+
+        // Persist the new mood for the next exchange
+        if (result.nextMood) {
+          currentMood = result.nextMood;
+        }
 
         await sessionService.recordAction(activeSessionId, payload.input, result.narration);
         await sessionService.updateZone(activeSessionId, result.zone.id);
+
+        // Build mentions list from known entity types
+        const mentions = _buildMentions(
+          result.npcsPresent ?? [],
+          result.characterName,
+          rishiName,
+        );
 
         const narrationPayload = {
           text: result.narration,
           zoneSlug: result.zone.slug,
           sessionId: activeSessionId,
           timestamp: new Date().toISOString(),
+          ...(result.suggestions && result.suggestions.length > 0 && { suggestions: result.suggestions }),
+          ...(mentions.length > 0 && { mentions }),
+          ...(result.zone.atmosphereTags?.length && { atmosphereTags: result.zone.atmosphereTags }),
         };
 
         // Send narration to everyone in the zone (including sender)
         io.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('world:narration', narrationPayload);
 
-        // If a new zone was discovered, broadcast veda update to the world
+        // If a new zone was discovered, broadcast veda update
         if (result.isNewZone) {
           io.to(`world:${activeWorldId}`).emit('veda:update', {
             type: 'zone',
@@ -200,6 +249,7 @@ export function registerSocketHandlers(
         // Join new zone room
         socket.join(zoneRoom(activeWorldId, targetSlug));
         activeZoneSlug = targetSlug;
+        _trackRecentZone(targetSlug);
 
         // Check if zone exists in Veda or generate it
         let zone = await vedaService.getZone(activeWorldId, targetSlug);
@@ -221,12 +271,14 @@ export function registerSocketHandlers(
             },
             targetSlug,
             'enter',
-            session.playerId,
+            resolvedPlayerId ?? session.playerId,
             activeCharacterId ? await prisma.character.findUnique({ where: { id: activeCharacterId } }) as any : null,
+            0, // first visit to this zone
+            sessionActionCount,
+            currentMood,
           );
           zone = result.zone;
 
-          // Broadcast new zone discovery
           io.to(`world:${activeWorldId}`).emit('veda:update', {
             type: 'zone',
             data: zone,
@@ -240,6 +292,7 @@ export function registerSocketHandlers(
           zoneSlug: zone.slug,
           sessionId: activeSessionId,
           timestamp: new Date().toISOString(),
+          atmosphereTags: zone.atmosphereTags,
         });
 
         // Notify others in new zone
@@ -262,5 +315,32 @@ export function registerSocketHandlers(
         await sessionService.end(activeSessionId).catch(console.error);
       }
     });
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    function _trackRecentZone(slug: string) {
+      const idx = recentZones.indexOf(slug);
+      if (idx !== -1) recentZones.splice(idx, 1);
+      recentZones.push(slug);
+      if (recentZones.length > 5) recentZones.shift();
+    }
+
+    function _buildMentions(
+      npcNames: string[],
+      characterName: string | undefined,
+      rishiNameVal: string | null,
+    ): NameMention[] {
+      const mentions: NameMention[] = [];
+      for (const name of npcNames) {
+        mentions.push({ name, type: 'npc' });
+      }
+      if (characterName) {
+        mentions.push({ name: characterName, type: 'pc' });
+      }
+      if (rishiNameVal) {
+        mentions.push({ name: rishiNameVal, type: 'rishi' });
+      }
+      return mentions;
+    }
   });
 }
