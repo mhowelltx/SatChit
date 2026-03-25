@@ -60,6 +60,11 @@ export class VedaService {
     return entity as VedaEntity;
   }
 
+  async listEntities(worldId: string): Promise<VedaEntity[]> {
+    const entities = await this.prisma.vedaEntity.findMany({ where: { worldId } });
+    return entities as VedaEntity[];
+  }
+
   async listEntitiesInZone(zoneId: string): Promise<VedaEntity[]> {
     const entities = await this.prisma.vedaEntity.findMany({ where: { zoneId } });
     return entities as VedaEntity[];

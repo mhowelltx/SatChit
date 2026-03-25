@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import Link from 'next/link';
 import { io, Socket } from 'socket.io-client';
 import type {
   ServerToClientEvents,
@@ -159,6 +160,13 @@ export default function PlayClient({ worldSlug }: PlayClientProps) {
       >
         <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>{worldSlug}</span>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          <Link
+            href={`/worlds/${worldSlug}/veda`}
+            target="_blank"
+            style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}
+          >
+            Veda ↗
+          </Link>
           {zoneSlug && (
             <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
               {zoneSlug}

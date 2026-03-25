@@ -106,15 +106,19 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
     }
   });
 
-  // Get the Veda for a world
-  router.get('/:worldId/veda', async (req, res) => {
+  // Get the Veda for a world (accepts slug)
+  router.get('/:slug/veda', async (req, res) => {
     try {
-      const [zones, lore, recentEvents] = await Promise.all([
-        vedaService.listZones(req.params.worldId),
-        vedaService.listLore(req.params.worldId),
-        vedaService.listRecentEvents(req.params.worldId, 20),
+      const world = await prisma.world.findUnique({ where: { slug: req.params.slug } });
+      if (!world) return res.status(404).json({ error: 'World not found.' });
+
+      const [zones, entities, lore, recentEvents] = await Promise.all([
+        vedaService.listZones(world.id),
+        vedaService.listEntities(world.id),
+        vedaService.listLore(world.id),
+        vedaService.listRecentEvents(world.id, 50),
       ]);
-      res.json({ zones, lore, recentEvents });
+      res.json({ zones, entities, lore, recentEvents });
     } catch (err) {
       res.status(500).json({ error: 'Failed to fetch Veda.' });
     }
