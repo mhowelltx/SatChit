@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { fetchCurrentUser, type CurrentUser } from '@/lib/auth';
+import { fetchCurrentUser, onAuthChange, type CurrentUser } from '@/lib/auth';
 import AuthForm from '@/components/AuthForm';
 
 const logo = `
@@ -25,6 +25,7 @@ export default function HomePage() {
 
   useEffect(() => {
     fetchCurrentUser().then(setUser);
+    return onAuthChange(() => fetchCurrentUser().then(setUser));
   }, []);
 
   function handleAuth(u: CurrentUser) {
