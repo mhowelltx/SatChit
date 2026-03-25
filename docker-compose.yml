@@ -31,6 +31,11 @@ services:
       AI_PROVIDER: stub
       PORT: '3001'
       JWT_SECRET: docker-dev-secret-change-in-production
+      # Rishi admin bootstrap — set these to auto-create the admin on first run
+      RISHI_USERNAME: ''
+      RISHI_PASSWORD: ''
+      RISHI_NAME: ''    # Avatar display name (defaults to RISHI_USERNAME)
+      RISHI_EMAIL: ''   # Optional
     ports:
       - '3001:3001'
     command: >
