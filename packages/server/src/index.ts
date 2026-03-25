@@ -11,12 +11,14 @@ import { createAuthRouter } from './routes/auth.js';
 import { createCharactersRouter } from './routes/characters.js';
 import { createNPCsRouter } from './routes/npcs.js';
 import { createAdminRouter } from './routes/admin.js';
+import { bootstrapRishiAdmin } from './services/BootstrapService.js';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const CLIENT_URL = process.env.CLIENT_URL ?? 'http://localhost:3000';
 
 async function main() {
   const prisma = new PrismaClient();
+  await bootstrapRishiAdmin(prisma);
   const ai = createAIProvider();
 
   const app = express();
