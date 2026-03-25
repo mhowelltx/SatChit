@@ -6,11 +6,18 @@ import { fetchCurrentUser, type CurrentUser } from '@/lib/auth';
 import AuthForm from '@/components/AuthForm';
 
 const logo = `
- ____        _   ____ _     _ _
-/ ___|  __ _| |_/ ___| |__ (_) |_
-\\___ \\ / _\` | __\\___ \\ '_ \\| | __|
- ___) | (_| | |_ ___) | | | | | |_
-|____/ \\__,_|\\__|____/|_| |_|_|\\__|
+ __     __       _
+ \\ \\   / /__  __| | __ _
+  \\ \\ / / _ \\/ _\` |/ _\` |
+   \\ V /  __/ (_| | (_| |
+    \\_/ \\___|\\__,_|\\__,_|
+
+ __        __         _     _   ____
+ \\ \\      / /__  _ __| | __| | / ___|  ___  _ __   __ _
+  \\ \\ /\\ / / _ \\| '__| |/ _\` | \\___ \\ / _ \\| '_ \\/ _\` |
+   \\ V  V / (_) | |  | | (_| |  ___) | (_) | | | | (_| |
+    \\_/\\_/ \\___/|_|  |_|\\__,_| |____/ \\___/|_| |_|\\__, |
+                                                    |___/
 `;
 
 export default function HomePage() {
@@ -46,9 +53,9 @@ export default function HomePage() {
           fontSize: '1rem',
         }}
       >
-        Explore AI-generated worlds shaped by consciousness and existence.
+        AI-generated worlds written into being through exploration.
         <br />
-        Every step you take writes the world into being.
+        Every step you take writes the world into song.
       </p>
     </>
   );

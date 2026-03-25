@@ -44,7 +44,7 @@ export default function NavBar() {
         href="/"
         style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 'bold', letterSpacing: '0.05em' }}
       >
-        SatChit
+        Veda World Song
       </Link>
 
       {/* Right — auth state */}
