@@ -66,6 +66,17 @@ export default function HomePage() {
         >
           Create a World
         </Link>
+        <Link
+          href="/profile"
+          style={{
+            padding: '0.75rem 1.5rem',
+            border: '1px solid var(--border)',
+            color: 'var(--text-muted)',
+            borderRadius: '4px',
+          }}
+        >
+          Profile
+        </Link>
       </div>
     </main>
   );

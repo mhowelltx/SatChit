@@ -24,6 +24,7 @@ interface LogEntry {
 
 interface PlayClientProps {
   worldSlug: string;
+  characterId: string | null;
 }
 
 // Placeholder until auth is implemented
@@ -31,7 +32,7 @@ const PLACEHOLDER_WORLD_ID = 'placeholder-world-id';
 const PLACEHOLDER_PLAYER_ID = 'placeholder-player-id';
 const PLACEHOLDER_SESSION_ID = 'placeholder-session-id';
 
-export default function PlayClient({ worldSlug }: PlayClientProps) {
+export default function PlayClient({ worldSlug, characterId }: PlayClientProps) {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [input, setInput] = useState('');
   const [connected, setConnected] = useState(false);
@@ -60,6 +61,7 @@ export default function PlayClient({ worldSlug }: PlayClientProps) {
         worldId: '',
         worldSlug,
         playerId: PLACEHOLDER_PLAYER_ID,
+        ...(characterId ? { characterId } : {}),
       });
     });
 
@@ -158,7 +160,12 @@ export default function PlayClient({ worldSlug }: PlayClientProps) {
           flexShrink: 0,
         }}
       >
-        <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>{worldSlug}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <Link href={`/worlds/${worldSlug}/characters`} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+            ← characters
+          </Link>
+          <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>{worldSlug}</span>
+        </div>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <Link
             href={`/worlds/${worldSlug}/veda`}

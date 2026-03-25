@@ -68,7 +68,7 @@ export default async function WorldDetailPage({ params }: { params: Promise<{ sl
       </section>
 
       <Link
-        href={`/worlds/${world.slug}/play`}
+        href={`/worlds/${world.slug}/characters`}
         style={{
           display: 'inline-block',
           padding: '0.75rem 2rem',

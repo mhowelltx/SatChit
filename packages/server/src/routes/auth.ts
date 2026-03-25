@@ -77,5 +77,44 @@ export function createAuthRouter(prisma: PrismaClient): Router {
     }
   });
 
+  // Get current user (seed user as placeholder for real auth)
+  router.get('/me', async (req, res) => {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { email: 'seed@satchit.dev' },
+        select: {
+          id: true,
+          email: true,
+          username: true,
+          role: true,
+          createdAt: true,
+          profile: true,
+        },
+      });
+      if (!user) return res.status(404).json({ error: 'No seed user found. Run pnpm db:seed first.' });
+      res.json({ user });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to fetch user.' });
+    }
+  });
+
+  // Upsert user profile
+  router.patch('/users/:id/profile', async (req, res) => {
+    try {
+      const { bio, avatarUrl } = req.body as { bio?: string; avatarUrl?: string };
+      const profile = await prisma.userProfile.upsert({
+        where: { userId: req.params.id },
+        create: { userId: req.params.id, bio: bio ?? null, avatarUrl: avatarUrl ?? null },
+        update: {
+          ...(bio !== undefined && { bio }),
+          ...(avatarUrl !== undefined && { avatarUrl }),
+        },
+      });
+      res.json({ profile });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to update profile.' });
+    }
+  });
+
   return router;
 }
