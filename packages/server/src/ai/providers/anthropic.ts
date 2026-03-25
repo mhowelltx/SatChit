@@ -45,7 +45,7 @@ export class AnthropicProvider implements IAIProvider {
   private apiKey: string;
   private model: string;
 
-  constructor(apiKey: string, model = 'claude-sonnet-4-6') {
+  constructor(apiKey: string, model = 'claude-haiku-4-5-20251001') {
     this.apiKey = apiKey;
     this.model = model;
   }
@@ -60,7 +60,7 @@ export class AnthropicProvider implements IAIProvider {
       },
       body: JSON.stringify({
         model: this.model,
-        max_tokens: 1024,
+        max_tokens: 600,
         system: buildSystemPrompt(context),
         messages: [{ role: 'user', content: buildUserPrompt(prompt, context) }],
       }),
