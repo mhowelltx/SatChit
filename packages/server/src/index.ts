@@ -10,6 +10,7 @@ import { createWorldsRouter } from './routes/worlds.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createCharactersRouter } from './routes/characters.js';
 import { createNPCsRouter } from './routes/npcs.js';
+import { createAdminRouter } from './routes/admin.js';
 
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 const CLIENT_URL = process.env.CLIENT_URL ?? 'http://localhost:3000';
@@ -30,6 +31,7 @@ async function main() {
   app.use('/api/worlds', createWorldsRouter(prisma, ai));
   app.use('/api/worlds', createNPCsRouter(prisma));
   app.use('/api/characters', createCharactersRouter(prisma));
+  app.use('/api/admin', createAdminRouter(prisma));
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
   // ── Socket.io ────────────────────────────────────────────────────────────────

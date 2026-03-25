@@ -53,6 +53,15 @@ export default function NavBar() {
           <span style={{ color: 'var(--text-muted)' }}>…</span>
         ) : user ? (
           <>
+            {user.role === 'ADMIN' && (
+              <Link
+                href="/rishi"
+                style={{ color: 'var(--warning, #e8a838)', textDecoration: 'none', fontSize: '0.78rem' }}
+                title="Rishi panel"
+              >
+                Rishi
+              </Link>
+            )}
             <Link
               href="/profile"
               style={{ color: 'var(--text)', textDecoration: 'none' }}
