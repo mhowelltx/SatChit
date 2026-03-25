@@ -1,6 +1,42 @@
 import type { IAIProvider, GenerationContext } from '../types.js';
 import { buildSystemPrompt, buildUserPrompt } from '../prompts.js';
 
+/** Structured error thrown when the Anthropic API returns a non-2xx response */
+export class AnthropicAPIError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly errorType: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'AnthropicAPIError';
+  }
+}
+
+function friendlyMessage(status: number, body: string): { type: string; message: string } {
+  try {
+    const parsed = JSON.parse(body) as { error?: { type?: string; message?: string } };
+    const type = parsed.error?.type ?? 'unknown_error';
+    const raw = parsed.error?.message ?? body;
+
+    if (status === 401 || status === 403) {
+      return { type, message: 'AI API key is invalid or unauthorised. Check the world\'s API key setting.' };
+    }
+    if (status === 429) {
+      return { type, message: 'AI rate limit reached. Please wait a moment and try again.' };
+    }
+    if (raw.toLowerCase().includes('credit')) {
+      return { type, message: 'AI credit balance exhausted. Add credits to your Anthropic account to continue.' };
+    }
+    if (status >= 500) {
+      return { type, message: 'AI service is temporarily unavailable. Please try again shortly.' };
+    }
+    return { type, message: `AI error: ${raw}` };
+  } catch {
+    return { type: 'unknown_error', message: `AI error (${status}). Please try again.` };
+  }
+}
+
 /**
  * Anthropic (Claude) AI provider.
  * Requires ANTHROPIC_API_KEY in the environment.
@@ -31,8 +67,9 @@ export class AnthropicProvider implements IAIProvider {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Anthropic API error ${response.status}: ${error}`);
+      const body = await response.text();
+      const { type, message } = friendlyMessage(response.status, body);
+      throw new AnthropicAPIError(response.status, type, message);
     }
 
     const data = (await response.json()) as {

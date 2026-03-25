@@ -8,6 +8,13 @@ import type {
   PlayerMovePayload,
 } from '@satchit/shared';
 import type { IAIProvider } from '../ai/index.js';
+import { AnthropicAPIError } from '../ai/providers/anthropic.js';
+
+function aiErrorMessage(err: unknown): string {
+  if (err instanceof AnthropicAPIError) return err.message;
+  if (err instanceof Error) return err.message;
+  return 'An unexpected error occurred.';
+}
 import { SessionService } from '../services/SessionService.js';
 import { WorldGeneratorService } from '../services/WorldGeneratorService.js';
 import { VedaService } from '../services/VedaService.js';
@@ -155,8 +162,8 @@ export function registerSocketHandlers(
       } catch (err) {
         console.error('player:action error', err);
         socket.emit('session:error', {
-          code: 'INTERNAL',
-          message: 'Failed to process action.',
+          code: err instanceof AnthropicAPIError ? `AI_${err.status}` : 'INTERNAL',
+          message: aiErrorMessage(err),
         });
       }
     });
@@ -244,8 +251,8 @@ export function registerSocketHandlers(
       } catch (err) {
         console.error('player:move error', err);
         socket.emit('session:error', {
-          code: 'INTERNAL',
-          message: 'Failed to move.',
+          code: err instanceof AnthropicAPIError ? `AI_${err.status}` : 'INTERNAL',
+          message: aiErrorMessage(err),
         });
       }
     });
