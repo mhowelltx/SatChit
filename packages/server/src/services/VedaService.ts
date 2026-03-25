@@ -19,6 +19,7 @@ export class VedaService {
     slug: string;
     description: string;
     rawContent: string;
+    atmosphereTags?: string[];
     discoveredById?: string;
   }): Promise<VedaZone> {
     const zone = await this.prisma.vedaZone.upsert({
@@ -27,6 +28,13 @@ export class VedaService {
       update: {},
     });
     return zone as VedaZone;
+  }
+
+  async updateAtmosphereTags(zoneId: string, tags: string[]): Promise<void> {
+    await this.prisma.vedaZone.update({
+      where: { id: zoneId },
+      data: { atmosphereTags: tags },
+    });
   }
 
   async listZones(worldId: string): Promise<VedaZone[]> {
@@ -90,6 +98,20 @@ export class VedaService {
   async listRecentEvents(worldId: string, limit = 10): Promise<VedaEvent[]> {
     const events = await this.prisma.vedaEvent.findMany({
       where: { worldId },
+      orderBy: { occurredAt: 'desc' },
+      take: limit,
+    });
+    return events as VedaEvent[];
+  }
+
+  /** Returns recent events in a zone that involved a specific player. */
+  async listZoneEventsForPlayer(worldId: string, zoneName: string, playerId: string, limit = 3): Promise<VedaEvent[]> {
+    const events = await this.prisma.vedaEvent.findMany({
+      where: {
+        worldId,
+        description: { contains: zoneName },
+        participantIds: { has: playerId },
+      },
       orderBy: { occurredAt: 'desc' },
       take: limit,
     });

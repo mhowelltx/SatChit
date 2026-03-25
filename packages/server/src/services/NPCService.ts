@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { NPC } from '@satchit/shared';
+import type { NPC, NPCRelationship } from '@satchit/shared';
 
 export interface CreateNPCData {
   worldId: string;
@@ -76,6 +76,50 @@ export class NPCService {
       where: { id: npcId },
       data: { currentZoneId: zoneId },
     });
+  }
+
+  // ── Relationships ──────────────────────────────────────────────────────────
+
+  async getRelationship(npcId: string, playerId: string): Promise<NPCRelationship | null> {
+    const rel = await this.prisma.nPCRelationship.findUnique({
+      where: { npcId_playerId: { npcId, playerId } },
+    });
+    return rel as unknown as NPCRelationship | null;
+  }
+
+  async listRelationshipsForPlayer(worldId: string, playerId: string): Promise<NPCRelationship[]> {
+    const rels = await this.prisma.nPCRelationship.findMany({
+      where: { worldId, playerId },
+    });
+    return rels as unknown as NPCRelationship[];
+  }
+
+  /**
+   * Adjust a player's relationship score with an NPC.
+   * delta: positive = friendlier, negative = more hostile. Clamped to [-100, 100].
+   * note: optional short context note for this interaction.
+   */
+  async adjustRelationship(
+    worldId: string,
+    npcId: string,
+    playerId: string,
+    delta: number,
+    note?: string,
+  ): Promise<NPCRelationship> {
+    const existing = await this.getRelationship(npcId, playerId);
+    const currentScore = existing?.score ?? 0;
+    const newScore = Math.max(-100, Math.min(100, currentScore + delta));
+    const currentNotes = existing?.notes ?? [];
+    const updatedNotes = note
+      ? [...currentNotes.slice(-4), note] // keep last 5 notes
+      : currentNotes;
+
+    const rel = await this.prisma.nPCRelationship.upsert({
+      where: { npcId_playerId: { npcId, playerId } },
+      create: { worldId, npcId, playerId, score: newScore, notes: updatedNotes },
+      update: { score: newScore, notes: updatedNotes, lastInteraction: new Date() },
+    });
+    return rel as unknown as NPCRelationship;
   }
 
   async update(npcId: string, data: Partial<CreateNPCData>): Promise<NPC> {

@@ -70,16 +70,17 @@ model World {
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
-  creator           User                   @relation(fields: [creatorId], references: [id])
-  zones             VedaZone[]
-  entities          VedaEntity[]
-  events            VedaEvent[]
-  lore              VedaLore[]
-  sessions          GameSession[]
-  characters        Character[]
-  npcs              NPC[]
-  items             Item[]
-  characterTemplate WorldCharacterTemplate?
+  creator            User                   @relation(fields: [creatorId], references: [id])
+  zones              VedaZone[]
+  entities           VedaEntity[]
+  events             VedaEvent[]
+  lore               VedaLore[]
+  sessions           GameSession[]
+  characters         Character[]
+  npcs               NPC[]
+  items              Item[]
+  characterTemplate  WorldCharacterTemplate?
+  npcRelationships   NPCRelationship[]
 
   @@map("worlds")
 }
@@ -107,6 +108,7 @@ model VedaZone {
   slug             String
   description      String
   rawContent       String   // Full AI-generated text stored verbatim
+  atmosphereTags   String[] // AI-assigned mood/tone tags: e.g. "eerie", "serene", "tense"
   discoveredById   String?
   ownerCharacterId String?  // Character who owns this location (home, etc.)
   discoveredAt     DateTime @default(now())
@@ -236,12 +238,30 @@ model NPC {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  world       World       @relation(fields: [worldId], references: [id], onDelete: Cascade)
-  vedaEntity  VedaEntity? @relation(fields: [vedaEntityId], references: [id])
-  currentZone VedaZone?   @relation(fields: [currentZoneId], references: [id])
-  inventory   NPCItem[]
+  world         World             @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  vedaEntity    VedaEntity?       @relation(fields: [vedaEntityId], references: [id])
+  currentZone   VedaZone?         @relation(fields: [currentZoneId], references: [id])
+  inventory     NPCItem[]
+  relationships NPCRelationship[]
 
   @@map("npcs")
+}
+
+// Relationship score between a player and an NPC (evolves through interaction)
+model NPCRelationship {
+  id              String   @id @default(cuid())
+  worldId         String
+  npcId           String
+  playerId        String
+  score           Int      @default(0) // -100 (hostile) to +100 (devoted)
+  notes           String[] // Brief context notes from interactions
+  lastInteraction DateTime @default(now())
+
+  world  World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  npc    NPC   @relation(fields: [npcId], references: [id], onDelete: Cascade)
+
+  @@unique([npcId, playerId])
+  @@map("npc_relationships")
 }
 
 // ── Items ─────────────────────────────────────────────────────────────────────

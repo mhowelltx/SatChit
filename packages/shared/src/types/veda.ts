@@ -9,6 +9,7 @@ export interface VedaZone {
   slug: string;
   description: string;
   rawContent: string;
+  atmosphereTags: string[]; // AI-assigned mood/tone tags: e.g. "eerie", "serene", "tense"
   discoveredById: string | null;
   discoveredAt: Date;
 }
