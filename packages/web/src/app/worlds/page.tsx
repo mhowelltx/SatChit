@@ -3,7 +3,7 @@ import Link from 'next/link';
 async function getWorlds() {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
   try {
-    const res = await fetch(`${apiUrl}/api/worlds`, { next: { revalidate: 30 } });
+    const res = await fetch(`${apiUrl}/api/worlds`, { cache: 'no-store' });
     if (!res.ok) return [];
     const data = await res.json() as { worlds: Array<{ id: string; name: string; slug: string; description: string; createdAt: string }> };
     return data.worlds;
