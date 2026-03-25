@@ -38,11 +38,13 @@ export async function fetchCurrentUser(): Promise<CurrentUser | null> {
   }
 }
 
+export type AuthResult = { user: CurrentUser; error: null } | { user: null; error: string };
+
 export async function register(
   username: string,
   email: string,
   password: string,
-): Promise<{ user: CurrentUser; error?: never } | { user?: never; error: string }> {
+): Promise<AuthResult> {
   try {
     const res = await fetch(`${API}/api/auth/register`, {
       method: 'POST',
@@ -50,18 +52,18 @@ export async function register(
       body: JSON.stringify({ username, email, password }),
     });
     const data = await res.json();
-    if (!res.ok) return { error: data.error ?? 'Registration failed.' };
+    if (!res.ok) return { user: null, error: data.error ?? 'Registration failed.' };
     storeUserId(data.user.id);
-    return { user: data.user };
+    return { user: data.user, error: null };
   } catch {
-    return { error: 'Network error.' };
+    return { user: null, error: 'Network error.' };
   }
 }
 
 export async function login(
   email: string,
   password: string,
-): Promise<{ user: CurrentUser; error?: never } | { user?: never; error: string }> {
+): Promise<AuthResult> {
   try {
     const res = await fetch(`${API}/api/auth/login`, {
       method: 'POST',
@@ -69,10 +71,10 @@ export async function login(
       body: JSON.stringify({ email, password }),
     });
     const data = await res.json();
-    if (!res.ok) return { error: data.error ?? 'Login failed.' };
+    if (!res.ok) return { user: null, error: data.error ?? 'Login failed.' };
     storeUserId(data.user.id);
-    return { user: data.user };
+    return { user: data.user, error: null };
   } catch {
-    return { error: 'Network error.' };
+    return { user: null, error: 'Network error.' };
   }
 }

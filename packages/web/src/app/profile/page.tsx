@@ -56,7 +56,7 @@ function AuthForm({ onAuth }: { onAuth: (user: CurrentUser) => void }) {
         mode === 'register'
           ? await register(username, email, password)
           : await login(email, password);
-      if (result.error) {
+      if (result.error !== null) {
         setError(result.error);
       } else {
         onAuth(result.user);
