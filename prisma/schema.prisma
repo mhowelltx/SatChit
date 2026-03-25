@@ -31,7 +31,8 @@ model User {
   createdWorlds   World[]
   gameSessions    GameSession[]
   characters      Character[]
-  discoveredZones VedaZone[] @relation("ZoneDiscoverer")
+  discoveredZones VedaZone[]     @relation("ZoneDiscoverer")
+  avatarCharacter AvatarCharacter?
 
   @@map("users")
 }
@@ -286,6 +287,23 @@ model NPCItem {
   item Item @relation(fields: [itemId], references: [id])
 
   @@map("npc_items")
+}
+
+// ── Rishi Avatar ──────────────────────────────────────────────────────────────
+
+// A Rishi's cross-world avatar character (one per Rishi, not bound to any world)
+model AvatarCharacter {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  name        String
+  description String?
+  traits      String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("avatar_characters")
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────────

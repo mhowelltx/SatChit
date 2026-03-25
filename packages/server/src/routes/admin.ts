@@ -44,6 +44,53 @@ export function createAdminRouter(prisma: PrismaClient): Router {
   const router = Router();
   const rishi = requireRishi(prisma);
 
+  // ── Avatar ─────────────────────────────────────────────────────────────────
+
+  // Get calling Rishi's avatar
+  router.get('/avatar', rishi, async (req, res) => {
+    const rishiId = hdr(req, 'x-rishi-id')!;
+    const avatar = await prisma.avatarCharacter.findUnique({ where: { userId: rishiId } });
+    res.json({ avatar });
+  });
+
+  // Create or update calling Rishi's avatar
+  router.post('/avatar', rishi, async (req, res) => {
+    const rishiId = hdr(req, 'x-rishi-id')!;
+    const { name, description, traits } = req.body as {
+      name: string;
+      description?: string;
+      traits?: string[];
+    };
+    if (!name) return res.status(400).json({ error: 'name is required.' });
+    const avatar = await prisma.avatarCharacter.upsert({
+      where: { userId: rishiId },
+      create: { userId: rishiId, name, description: description ?? null, traits: traits ?? [] },
+      update: { name, description: description ?? null, traits: traits ?? [] },
+    });
+    res.json({ avatar });
+  });
+
+  // ── Sessions ───────────────────────────────────────────────────────────────
+
+  // List all active player sessions
+  router.get('/sessions', rishi, async (req, res) => {
+    try {
+      const sessions = await prisma.gameSession.findMany({
+        where: { status: 'ACTIVE' },
+        include: {
+          player: { select: { id: true, username: true, role: true } },
+          world: { select: { id: true, name: true, slug: true } },
+          currentZone: { select: { id: true, name: true, slug: true } },
+          character: { select: { id: true, name: true } },
+        },
+        orderBy: { startedAt: 'desc' },
+      });
+      res.json({ sessions });
+    } catch {
+      res.status(500).json({ error: 'Failed to load sessions.' });
+    }
+  });
+
   // ── Users ──────────────────────────────────────────────────────────────────
 
   // List all users

@@ -679,9 +679,177 @@ function CharactersTab({ rishiId }: { rishiId: string }) {
   );
 }
 
+// ── Avatar Tab ────────────────────────────────────────────────────────────────
+
+interface AvatarCharacter {
+  id: string;
+  name: string;
+  description: string | null;
+  traits: string[];
+}
+
+function AvatarTab({ rishiId }: { rishiId: string }) {
+  const [avatar, setAvatar] = useState<AvatarCharacter | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [traits, setTraits] = useState('');
+
+  const headers = { 'Content-Type': 'application/json', 'X-Rishi-Id': rishiId };
+
+  useEffect(() => {
+    fetch(`${API}/api/admin/avatar`, { headers: { 'X-Rishi-Id': rishiId } })
+      .then(r => r.json())
+      .then(({ avatar: a }) => {
+        setAvatar(a ?? null);
+        if (a) { setName(a.name); setDescription(a.description ?? ''); setTraits(a.traits.join(', ')); }
+      })
+      .finally(() => setLoading(false));
+  }, [rishiId]);
+
+  async function save() {
+    if (!name.trim()) { setError('Name is required.'); return; }
+    setSaving(true); setError(''); setSuccess('');
+    try {
+      const res = await fetch(`${API}/api/admin/avatar`, {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          name: name.trim(),
+          description: description.trim() || null,
+          traits: traits.split(',').map(s => s.trim()).filter(Boolean),
+        }),
+      });
+      if (!res.ok) { const e = await res.json(); setError(e.error); return; }
+      const { avatar: a } = await res.json();
+      setAvatar(a);
+      setSuccess('Avatar saved.');
+    } finally { setSaving(false); }
+  }
+
+  if (loading) return <p style={{ color: 'var(--text-muted)' }}>Loading…</p>;
+
+  return (
+    <div style={{ maxWidth: '520px' }}>
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem', lineHeight: 1.6 }}>
+        Your Avatar is a cross-world character that lets you enter any world and join any player session as a Rishi.
+        {avatar ? ' Your avatar is active.' : ' You have no avatar yet — create one below.'}
+      </p>
+
+      {error && <p style={{ color: 'var(--error, #c0392b)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>{error}</p>}
+      {success && <p style={{ color: 'var(--success, #27ae60)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>{success}</p>}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+        <div>
+          <p style={sectionHead}>Avatar Name</p>
+          <input style={inputSm} placeholder="e.g. The Watcher" value={name} onChange={e => setName(e.target.value)} />
+        </div>
+        <div>
+          <p style={sectionHead}>Description (optional)</p>
+          <textarea style={{ ...inputSm, resize: 'vertical' }} rows={3} placeholder="Appearance, presence, how others perceive you…" value={description} onChange={e => setDescription(e.target.value)} />
+        </div>
+        <div>
+          <p style={sectionHead}>Traits (comma-separated)</p>
+          <input style={inputSm} placeholder="e.g. observant, ancient, calm" value={traits} onChange={e => setTraits(e.target.value)} />
+        </div>
+        <div style={{ marginTop: '0.25rem' }}>
+          <button style={accentBtn} onClick={save} disabled={saving}>{saving ? 'Saving…' : avatar ? 'Update Avatar' : 'Create Avatar'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Sessions Tab ──────────────────────────────────────────────────────────────
+
+interface ActiveSession {
+  id: string;
+  startedAt: string;
+  player: { id: string; username: string; role: string };
+  world: { id: string; name: string; slug: string };
+  currentZone: { id: string; name: string; slug: string } | null;
+  character: { id: string; name: string } | null;
+}
+
+function SessionsTab({ rishiId }: { rishiId: string }) {
+  const [sessions, setSessions] = useState<ActiveSession[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [hasAvatar, setHasAvatar] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [sessRes, avRes] = await Promise.all([
+        fetch(`${API}/api/admin/sessions`, { headers: { 'X-Rishi-Id': rishiId } }).then(r => r.json()),
+        fetch(`${API}/api/admin/avatar`, { headers: { 'X-Rishi-Id': rishiId } }).then(r => r.json()),
+      ]);
+      setSessions(sessRes.sessions ?? []);
+      setHasAvatar(!!avRes.avatar);
+    } finally { setLoading(false); }
+  }, [rishiId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Auto-refresh every 15 seconds
+  useEffect(() => {
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  if (loading) return <p style={{ color: 'var(--text-muted)' }}>Loading sessions…</p>;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <p style={{ ...sectionHead, margin: 0 }}>{sessions.length} active session{sessions.length !== 1 ? 's' : ''}</p>
+        <button style={mutedBtn} onClick={load}>Refresh</button>
+      </div>
+
+      {!hasAvatar && (
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--warning, #e8a838)', borderRadius: '6px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem', color: 'var(--warning, #e8a838)' }}>
+          Create an Avatar first (Avatar tab) to be able to join sessions.
+        </div>
+      )}
+
+      {sessions.length === 0 && (
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No players are currently in a session.</p>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+        {sessions.map(s => (
+          <div key={s.id} style={{ border: '1px solid var(--border)', borderRadius: '6px', padding: '0.75rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.25rem' }}>
+                <span style={{ color: 'var(--text)', fontWeight: 'bold' }}>{s.player.username}</span>
+                {s.character && <span style={{ color: 'var(--accent)', fontSize: '0.8rem' }}>as {s.character.name}</span>}
+                <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: 'var(--success, #27ae60)', display: 'inline-block' }} title="Online" />
+              </div>
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                <Link href={`/worlds/${s.world.slug}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>{s.world.name}</Link>
+                {s.currentZone && <span> · {s.currentZone.name}</span>}
+                <span> · joined {new Date(s.startedAt).toLocaleTimeString()}</span>
+              </div>
+            </div>
+            {hasAvatar && s.currentZone && (
+              <Link
+                href={`/worlds/${s.world.slug}/play?targetZoneSlug=${s.currentZone.slug}`}
+                style={{ ...accentBtn, textDecoration: 'none', display: 'inline-block', background: 'var(--warning, #e8a838)' }}
+              >
+                Join
+              </Link>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-type Tab = 'users' | 'worlds' | 'veda' | 'characters';
+type Tab = 'users' | 'worlds' | 'veda' | 'characters' | 'avatar' | 'sessions';
 
 export default function RishiPage() {
   const [user, setUser] = useState<CurrentUser | null | 'loading'>('loading');
@@ -712,6 +880,8 @@ export default function RishiPage() {
   }
 
   const tabs: { key: Tab; label: string }[] = [
+    { key: 'sessions', label: 'Sessions' },
+    { key: 'avatar', label: 'Avatar' },
     { key: 'users', label: 'Users' },
     { key: 'worlds', label: 'Worlds' },
     { key: 'veda', label: 'Veda' },
@@ -735,6 +905,8 @@ export default function RishiPage() {
         ))}
       </div>
 
+      {tab === 'sessions' && <SessionsTab rishiId={user.id} />}
+      {tab === 'avatar' && <AvatarTab rishiId={user.id} />}
       {tab === 'users' && <UsersTab rishiId={user.id} />}
       {tab === 'worlds' && <WorldsTab rishiId={user.id} />}
       {tab === 'veda' && <VedaTab rishiId={user.id} />}

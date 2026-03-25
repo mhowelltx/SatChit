@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { io, Socket } from 'socket.io-client';
+import { getStoredUserId } from '@/lib/auth';
 import type {
   ServerToClientEvents,
   ClientToServerEvents,
@@ -25,14 +26,12 @@ interface LogEntry {
 interface PlayClientProps {
   worldSlug: string;
   characterId: string | null;
+  targetZoneSlug?: string | null;
 }
 
-// Placeholder until auth is implemented
-const PLACEHOLDER_WORLD_ID = 'placeholder-world-id';
-const PLACEHOLDER_PLAYER_ID = 'placeholder-player-id';
 const PLACEHOLDER_SESSION_ID = 'placeholder-session-id';
 
-export default function PlayClient({ worldSlug, characterId }: PlayClientProps) {
+export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: PlayClientProps) {
   const [log, setLog] = useState<LogEntry[]>([]);
   const [input, setInput] = useState('');
   const [connected, setConnected] = useState(false);
@@ -60,8 +59,9 @@ export default function PlayClient({ worldSlug, characterId }: PlayClientProps) 
       socket.emit('session:join', {
         worldId: '',
         worldSlug,
-        playerId: PLACEHOLDER_PLAYER_ID,
+        playerId: getStoredUserId() ?? 'placeholder-player-id',
         ...(characterId ? { characterId } : {}),
+        ...(targetZoneSlug ? { targetZoneSlug } : {}),
       });
     });
 

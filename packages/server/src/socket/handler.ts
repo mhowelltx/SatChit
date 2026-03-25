@@ -37,7 +37,7 @@ export function registerSocketHandlers(
 
     socket.on('session:join', async (payload: SessionJoinPayload) => {
       try {
-        const { worldId, worldSlug, playerId, characterId } = payload;
+        const { worldId, worldSlug, playerId, characterId, targetZoneSlug } = payload;
 
         const world = worldSlug
           ? await prisma.world.findUnique({ where: { slug: worldSlug } })
@@ -61,9 +61,11 @@ export function registerSocketHandlers(
         activeSessionId = session.id;
         activeWorldId = world.id;
 
-        // Place player in the first available starter zone
+        // Resolve start zone: use targetZoneSlug if provided (Rishi avatar join), else first zone
         const zones = await vedaService.listZones(world.id);
-        const startZone = zones[0];
+        const startZone = targetZoneSlug
+          ? (zones.find(z => z.slug === targetZoneSlug) ?? zones[0])
+          : zones[0];
 
         if (startZone) {
           activeZoneSlug = startZone.slug;

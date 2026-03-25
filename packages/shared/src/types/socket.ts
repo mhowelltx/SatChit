@@ -7,6 +7,7 @@ export interface SessionJoinPayload {
   worldSlug?: string;
   playerId: string;
   characterId?: string;
+  targetZoneSlug?: string; // Rishi avatar: join a specific zone directly
 }
 
 export interface PlayerActionPayload {
