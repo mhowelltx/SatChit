@@ -1,15 +1,14 @@
 'use client';
 
 import { Suspense, useState, useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   fetchCurrentUser,
-  register,
-  login,
   clearStoredUserId,
   type CurrentUser,
 } from '@/lib/auth';
+import AuthForm from '@/components/AuthForm';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
@@ -29,128 +28,15 @@ interface WorldInfo {
   slug: string;
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
-
 const fieldStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '0.35rem', marginBottom: '1.1rem' };
 const labelStyle: React.CSSProperties = { color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.1em' };
 const inputStyle: React.CSSProperties = { width: '100%', fontSize: '0.9rem' };
 const sectionHead: React.CSSProperties = { color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.12em', margin: '0 0 0.75rem' };
-const primaryBtn: React.CSSProperties = { background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: '4px', padding: '0.55rem 1.5rem', fontSize: '0.9rem', width: '100%' };
-const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--accent)', fontSize: '0.85rem', padding: 0 };
-
-// ── Auth form ─────────────────────────────────────────────────────────────────
-
-function AuthForm({ onAuth, returnTo }: { onAuth: (user: CurrentUser) => void; returnTo: string | null }) {
-  const router = useRouter();
-  const [mode, setMode] = useState<'login' | 'register'>('register');
-  const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setSubmitting(true);
-    try {
-      const result =
-        mode === 'register'
-          ? await register(username, email, password)
-          : await login(email, password);
-      if (result.error !== null) {
-        setError(result.error);
-      } else {
-        if (returnTo) {
-          router.push(returnTo);
-        } else {
-          onAuth(result.user);
-        }
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div style={{ maxWidth: '400px', margin: '0 auto' }}>
-      <h2 style={{ color: 'var(--accent)', margin: '0 0 0.25rem' }}>
-        {mode === 'register' ? 'Create Account' : 'Sign In'}
-      </h2>
-      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
-        {mode === 'register'
-          ? 'Create a player account to build characters and explore worlds.'
-          : 'Welcome back.'}
-      </p>
-
-      <form onSubmit={handleSubmit}>
-        {mode === 'register' && (
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Username</label>
-            <input
-              required
-              style={inputStyle}
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="yourname"
-              autoComplete="username"
-            />
-          </div>
-        )}
-
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Email</label>
-          <input
-            required
-            type="email"
-            style={inputStyle}
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            autoComplete="email"
-          />
-        </div>
-
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Password</label>
-          <input
-            required
-            type="password"
-            style={inputStyle}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
-            autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
-            minLength={6}
-          />
-        </div>
-
-        {error && (
-          <p style={{ color: 'var(--error)', fontSize: '0.85rem', margin: '0 0 0.75rem' }}>{error}</p>
-        )}
-
-        <button type="submit" disabled={submitting} style={{ ...primaryBtn, opacity: submitting ? 0.6 : 1 }}>
-          {submitting
-            ? mode === 'register' ? 'Creating…' : 'Signing in…'
-            : mode === 'register' ? 'Create Account' : 'Sign In'}
-        </button>
-      </form>
-
-      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '1.25rem', textAlign: 'center' }}>
-        {mode === 'register' ? 'Already have an account?' : "Don't have an account?"}{' '}
-        <button style={ghostBtn} onClick={() => { setMode(mode === 'register' ? 'login' : 'register'); setError(null); }}>
-          {mode === 'register' ? 'Sign in' : 'Register'}
-        </button>
-      </p>
-    </div>
-  );
-}
-
-// ── Profile view ──────────────────────────────────────────────────────────────
 
 function ProfilePage() {
   const searchParams = useSearchParams();
   const returnTo = searchParams.get('returnTo');
+
   const [user, setUser] = useState<CurrentUser | null | 'loading'>('loading');
   const [bio, setBio] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
@@ -215,7 +101,6 @@ function ProfilePage() {
     setCharacters([]);
   }
 
-  // Loading state
   if (user === 'loading') {
     return (
       <main style={{ maxWidth: '640px', margin: '0 auto', padding: '2rem' }}>
@@ -224,24 +109,20 @@ function ProfilePage() {
     );
   }
 
-  // Not logged in — show auth form
   if (!user) {
     return (
       <main style={{ maxWidth: '640px', margin: '0 auto', padding: '2rem' }}>
         <Link href="/" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>← Home</Link>
-        {returnTo && (
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '1.5rem', marginBottom: '-1rem' }}>
-            Sign in to continue to <span style={{ color: 'var(--text)' }}>{returnTo}</span>
-          </p>
-        )}
         <div style={{ marginTop: '2.5rem' }}>
-          <AuthForm onAuth={handleAuth} returnTo={returnTo} />
+          <AuthForm
+            onAuth={handleAuth}
+            context={returnTo ? `Sign in to continue to ${returnTo}` : 'Sign in to view your profile.'}
+          />
         </div>
       </main>
     );
   }
 
-  // Logged in
   const byWorld = characters.reduce<Record<string, Character[]>>((acc, c) => {
     (acc[c.worldId] ??= []).push(c);
     return acc;
@@ -251,8 +132,11 @@ function ProfilePage() {
     <main style={{ maxWidth: '640px', margin: '0 auto', padding: '2rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
         <Link href="/worlds" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>← Worlds</Link>
-        <button onClick={handleSignOut} style={{ ...ghostBtn, color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-          Sign out
+        <button
+          onClick={handleSignOut}
+          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.8rem', cursor: 'pointer' }}
+        >
+          Sign Out
         </button>
       </div>
 
@@ -273,7 +157,6 @@ function ProfilePage() {
         </div>
         <div>
           <div style={{ color: 'var(--accent)', fontWeight: 'bold', fontSize: '1.1rem' }}>{user.username}</div>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{user.email}</div>
           <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
             {user.role.toLowerCase()} · joined {new Date(user.createdAt).toLocaleDateString()}
           </div>

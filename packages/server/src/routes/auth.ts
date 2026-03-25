@@ -7,29 +7,29 @@ export function createAuthRouter(prisma: PrismaClient): Router {
   const router = Router();
   const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret';
 
-  // Register
+  // Register — username + password only, no email required
   router.post('/register', async (req, res) => {
     try {
-      const { email, username, password } = req.body as {
-        email: string;
+      const { username, password } = req.body as {
         username: string;
         password: string;
       };
 
-      if (!email || !username || !password) {
-        return res.status(400).json({ error: 'email, username, and password are required.' });
+      if (!username || !password) {
+        return res.status(400).json({ error: 'username and password are required.' });
+      }
+      if (password.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters.' });
       }
 
-      const existing = await prisma.user.findFirst({
-        where: { OR: [{ email }, { username }] },
-      });
+      const existing = await prisma.user.findUnique({ where: { username } });
       if (existing) {
-        return res.status(409).json({ error: 'Email or username already taken.' });
+        return res.status(409).json({ error: 'Username already taken.' });
       }
 
       const passwordHash = await bcrypt.hash(password, 12);
       const user = await prisma.user.create({
-        data: { email, username, passwordHash },
+        data: { username, passwordHash },
         select: { id: true, email: true, username: true, role: true, createdAt: true },
       });
 
@@ -39,16 +39,21 @@ export function createAuthRouter(prisma: PrismaClient): Router {
 
       res.status(201).json({ user, token });
     } catch (err) {
+      console.error('POST /auth/register error', err);
       res.status(500).json({ error: 'Registration failed.' });
     }
   });
 
-  // Login
+  // Login — by username + password
   router.post('/login', async (req, res) => {
     try {
-      const { email, password } = req.body as { email: string; password: string };
+      const { username, password } = req.body as { username: string; password: string };
 
-      const user = await prisma.user.findUnique({ where: { email } });
+      if (!username || !password) {
+        return res.status(400).json({ error: 'username and password are required.' });
+      }
+
+      const user = await prisma.user.findUnique({ where: { username } });
       if (!user) {
         return res.status(401).json({ error: 'Invalid credentials.' });
       }
@@ -73,16 +78,19 @@ export function createAuthRouter(prisma: PrismaClient): Router {
         token,
       });
     } catch (err) {
+      console.error('POST /auth/login error', err);
       res.status(500).json({ error: 'Login failed.' });
     }
   });
 
-  // Get current user by stored userId (localStorage-based auth placeholder)
+  // Get current user by stored userId
   router.get('/me', async (req, res) => {
     try {
       const { userId } = req.query as { userId?: string };
+      if (!userId) return res.status(400).json({ error: 'userId query param required.' });
+
       const user = await prisma.user.findUnique({
-        where: userId ? { id: userId } : { email: 'seed@satchit.dev' },
+        where: { id: userId },
         select: {
           id: true,
           email: true,

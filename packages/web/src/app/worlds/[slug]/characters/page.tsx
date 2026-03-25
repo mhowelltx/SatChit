@@ -3,7 +3,8 @@
 import { Suspense, useState, useEffect, use } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { fetchCurrentUser, register, login, type CurrentUser } from '@/lib/auth';
+import { fetchCurrentUser, type CurrentUser } from '@/lib/auth';
+import AuthForm from '@/components/AuthForm';
 import type {
   WorldCharacterTemplate,
   TemplateAttribute,
@@ -37,63 +38,6 @@ const labelStyle: React.CSSProperties = { color: 'var(--text-muted)', fontSize: 
 const inputStyle: React.CSSProperties = { width: '100%', fontSize: '0.9rem' };
 const row3: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' };
 const sectionHead: React.CSSProperties = { color: 'var(--text-muted)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.12em', margin: '1.5rem 0 1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.35rem' };
-
-function InlineAuth({ onAuth }: { onAuth: (user: CurrentUser) => void }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [username, setUsername] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setSubmitting(true);
-    try {
-      const result = mode === 'register'
-        ? await register(username, email, password)
-        : await login(email, password);
-      if (result.error !== null) setError(result.error);
-      else onAuth(result.user);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.5rem', maxWidth: '380px' }}>
-      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-        Sign in to create or choose a character.
-      </p>
-      <form onSubmit={handleSubmit}>
-        {mode === 'register' && (
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Username</label>
-            <input required style={inputStyle} value={username} onChange={(e) => setUsername(e.target.value)} placeholder="yourname" />
-          </div>
-        )}
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Email</label>
-          <input required type="email" style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
-        </div>
-        <div style={fieldStyle}>
-          <label style={labelStyle}>Password</label>
-          <input required type="password" style={inputStyle} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" minLength={6} />
-        </div>
-        {error && <p style={{ color: 'var(--error)', fontSize: '0.85rem', margin: '0 0 0.75rem' }}>{error}</p>}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <button type="submit" disabled={submitting} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: '4px', padding: '0.5rem 1.25rem', fontSize: '0.9rem', opacity: submitting ? 0.6 : 1 }}>
-            {submitting ? '…' : mode === 'register' ? 'Create Account' : 'Sign In'}
-          </button>
-          <button type="button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(null); }} style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: '0.85rem', padding: 0 }}>
-            {mode === 'login' ? 'Register instead' : 'Sign in instead'}
-          </button>
-        </div>
-      </form>
-    </div>
-  );
-}
 
 function DynamicField({ attr, value, onChange }: {
   attr: TemplateAttribute;
@@ -316,7 +260,11 @@ function CharactersPage({ params }: { params: Promise<{ slug: string }> }) {
         </p>
       )}
 
-      {!user && <InlineAuth onAuth={handleAuth} />}
+      {!user && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.5rem' }}>
+          <AuthForm onAuth={handleAuth} context="Sign in to create or choose a character." />
+        </div>
+      )}
 
       {user && (
         <>
