@@ -55,7 +55,7 @@ export default function HomePage() {
       >
         AI-generated worlds written into being through exploration.
         <br />
-        Every step you take writes the world into song.
+        Every act you make sings the world into being.
       </p>
     </>
   );
