@@ -5,12 +5,14 @@ import type { IAIProvider } from '../ai/index.js';
 import { WorldGeneratorService } from '../services/WorldGeneratorService.js';
 import { VedaService } from '../services/VedaService.js';
 import { WorldTemplateService } from '../services/WorldTemplateService.js';
+import { WorldFeatureService } from '../services/WorldFeatureService.js';
 
 export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Router {
   const router = Router();
   const worldGenerator = new WorldGeneratorService(prisma, ai);
   const vedaService = new VedaService(prisma);
   const worldTemplateService = new WorldTemplateService(prisma, ai);
+  const worldFeatureService = new WorldFeatureService(prisma);
 
   // List public worlds
   router.get('/', async (req, res) => {
@@ -156,6 +158,19 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
       res.json({ zones, entities, lore, recentEvents });
     } catch (err) {
       res.status(500).json({ error: 'Failed to fetch Veda.' });
+    }
+  });
+
+  // List player-built features for a world
+  router.get('/:slug/features', async (req, res) => {
+    try {
+      const world = await prisma.world.findUnique({ where: { slug: req.params.slug } });
+      if (!world) return res.status(404).json({ error: 'World not found.' });
+
+      const features = await worldFeatureService.findByWorld(world.id);
+      res.json({ features });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to fetch features.' });
     }
   });
 
