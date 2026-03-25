@@ -179,7 +179,42 @@ export function registerSocketHandlers(
         }
 
         await sessionService.recordAction(activeSessionId, payload.input, result.narration);
-        await sessionService.updateZone(activeSessionId, result.zone.id);
+
+        // Handle zone transition: player narrative travel moved them to a new zone
+        if (result.nextZone && result.nextZone.slug !== activeZoneSlug) {
+          const fromSlug = activeZoneSlug;
+          const toSlug = result.nextZone.slug;
+          const user = await prisma.user.findUnique({ where: { id: resolvedPlayerId ?? session.playerId } });
+
+          socket.leave(zoneRoom(activeWorldId, fromSlug!));
+          socket.to(zoneRoom(activeWorldId, fromSlug!)).emit('player:moved', {
+            playerId: resolvedPlayerId ?? session.playerId,
+            username: user?.username ?? 'Unknown',
+            fromZoneSlug: fromSlug,
+            toZoneSlug: toSlug,
+          });
+
+          socket.join(zoneRoom(activeWorldId, toSlug));
+          activeZoneSlug = toSlug;
+          _trackRecentZone(toSlug);
+
+          await sessionService.updateZone(activeSessionId, result.nextZone.id);
+
+          socket.to(zoneRoom(activeWorldId, toSlug)).emit('player:joined', {
+            playerId: resolvedPlayerId ?? session.playerId,
+            username: user?.username ?? 'Unknown',
+            zoneSlug: toSlug,
+          });
+
+          if (result.isNewNextZone) {
+            io.to(`world:${activeWorldId}`).emit('veda:update', {
+              type: 'zone',
+              data: result.nextZone,
+            });
+          }
+        } else {
+          await sessionService.updateZone(activeSessionId, result.zone.id);
+        }
 
         // Build mentions list from known entity types
         const mentions = _buildMentions(
@@ -188,24 +223,35 @@ export function registerSocketHandlers(
           rishiName,
         );
 
+        // Use the final zone (after possible transition)
+        const finalZone = result.nextZone ?? result.zone;
+
         const narrationPayload = {
           text: result.narration,
-          zoneSlug: result.zone.slug,
+          zoneSlug: finalZone.slug,
           sessionId: activeSessionId,
           timestamp: new Date().toISOString(),
           ...(result.suggestions && result.suggestions.length > 0 && { suggestions: result.suggestions }),
           ...(mentions.length > 0 && { mentions }),
-          ...(result.zone.atmosphereTags?.length && { atmosphereTags: result.zone.atmosphereTags }),
+          ...(finalZone.atmosphereTags?.length && { atmosphereTags: finalZone.atmosphereTags }),
         };
 
-        // Send narration to everyone in the zone (including sender)
+        // Send narration to everyone in the (possibly new) zone
         io.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('world:narration', narrationPayload);
 
-        // If a new zone was discovered, broadcast veda update
+        // If the origin zone was newly created, broadcast veda update
         if (result.isNewZone) {
           io.to(`world:${activeWorldId}`).emit('veda:update', {
             type: 'zone',
             data: result.zone,
+          });
+        }
+
+        // If a new player-built feature was created, broadcast veda update
+        if (result.newFeature) {
+          io.to(`world:${activeWorldId}`).emit('veda:update', {
+            type: 'feature',
+            data: result.newFeature,
           });
         }
       } catch (err) {

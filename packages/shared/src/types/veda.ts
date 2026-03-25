@@ -1,5 +1,6 @@
 export type EntityType = 'NPC' | 'CREATURE' | 'FACTION' | 'OBJECT';
 export type LoreCategory = 'LAW' | 'CULTURE' | 'COSMOLOGY' | 'MYTH';
+export type FeatureType = 'MONUMENT' | 'BUILDING' | 'ALTAR' | 'STRUCTURE' | 'MARKER' | 'OTHER';
 
 // A location/area players can explore
 export interface VedaZone {
@@ -43,6 +44,31 @@ export interface VedaLore {
   title: string;
   content: string;
   createdAt: Date;
+}
+
+// A player-built or player-created physical feature in the world
+export interface WorldFeature {
+  id: string;
+  worldId: string;
+  zoneId: string | null;
+  name: string;
+  description: string;
+  featureType: FeatureType;
+  builtByCharacterId: string | null;
+  builtByPlayerId: string | null;
+  attributes: Record<string, unknown>;
+  createdAt: Date;
+  interactions?: FeatureInteraction[];
+}
+
+// A log entry of a player interacting with a world feature
+export interface FeatureInteraction {
+  id: string;
+  featureId: string;
+  playerId: string;
+  characterId: string | null;
+  action: string;
+  timestamp: Date;
 }
 
 // Everything the Veda knows about a zone, used as AI generation context
