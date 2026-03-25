@@ -66,7 +66,7 @@ export default function CharactersPage({ params }: { params: Promise<{ slug: str
     ])
       .then(([worldData, u]) => {
         const w: World = worldData.world;
-        if (!u) { router.push('/profile'); return null; }
+        if (!u) { router.push(`/profile?returnTo=/worlds/${slug}/characters`); return null; }
         setWorld(w);
         setUser(u);
         return fetch(`${API}/api/characters?userId=${u.id}&worldId=${w.id}`).then((r) => r.json());

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   fetchCurrentUser,
@@ -39,7 +40,8 @@ const ghostBtn: React.CSSProperties = { background: 'none', border: 'none', colo
 
 // ── Auth form ─────────────────────────────────────────────────────────────────
 
-function AuthForm({ onAuth }: { onAuth: (user: CurrentUser) => void }) {
+function AuthForm({ onAuth, returnTo }: { onAuth: (user: CurrentUser) => void; returnTo: string | null }) {
+  const router = useRouter();
   const [mode, setMode] = useState<'login' | 'register'>('register');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -59,7 +61,11 @@ function AuthForm({ onAuth }: { onAuth: (user: CurrentUser) => void }) {
       if (result.error !== null) {
         setError(result.error);
       } else {
-        onAuth(result.user);
+        if (returnTo) {
+          router.push(returnTo);
+        } else {
+          onAuth(result.user);
+        }
       }
     } finally {
       setSubmitting(false);
@@ -143,6 +149,8 @@ function AuthForm({ onAuth }: { onAuth: (user: CurrentUser) => void }) {
 // ── Profile view ──────────────────────────────────────────────────────────────
 
 export default function ProfilePage() {
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get('returnTo');
   const [user, setUser] = useState<CurrentUser | null | 'loading'>('loading');
   const [bio, setBio] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
@@ -221,8 +229,13 @@ export default function ProfilePage() {
     return (
       <main style={{ maxWidth: '640px', margin: '0 auto', padding: '2rem' }}>
         <Link href="/" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>← Home</Link>
+        {returnTo && (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '1.5rem', marginBottom: '-1rem' }}>
+            Sign in to continue to <span style={{ color: 'var(--text)' }}>{returnTo}</span>
+          </p>
+        )}
         <div style={{ marginTop: '2.5rem' }}>
-          <AuthForm onAuth={handleAuth} />
+          <AuthForm onAuth={handleAuth} returnTo={returnTo} />
         </div>
       </main>
     );
