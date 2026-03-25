@@ -77,11 +77,12 @@ export function createAuthRouter(prisma: PrismaClient): Router {
     }
   });
 
-  // Get current user (seed user as placeholder for real auth)
+  // Get current user by stored userId (localStorage-based auth placeholder)
   router.get('/me', async (req, res) => {
     try {
+      const { userId } = req.query as { userId?: string };
       const user = await prisma.user.findUnique({
-        where: { email: 'seed@satchit.dev' },
+        where: userId ? { id: userId } : { email: 'seed@satchit.dev' },
         select: {
           id: true,
           email: true,
@@ -91,7 +92,7 @@ export function createAuthRouter(prisma: PrismaClient): Router {
           profile: true,
         },
       });
-      if (!user) return res.status(404).json({ error: 'No seed user found. Run pnpm db:seed first.' });
+      if (!user) return res.status(404).json({ error: 'User not found.' });
       res.json({ user });
     } catch (err) {
       res.status(500).json({ error: 'Failed to fetch user.' });

@@ -3,6 +3,7 @@
 import { useState, useEffect, use } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { fetchCurrentUser } from '@/lib/auth';
 
 interface World {
   id: string;
@@ -61,16 +62,18 @@ export default function CharactersPage({ params }: { params: Promise<{ slug: str
   useEffect(() => {
     Promise.all([
       fetch(`${API}/api/worlds/${slug}`).then((r) => r.json()),
-      fetch(`${API}/api/auth/me`).then((r) => r.json()),
+      fetchCurrentUser(),
     ])
-      .then(([worldData, userData]) => {
+      .then(([worldData, u]) => {
         const w: World = worldData.world;
-        const u: CurrentUser = userData.user;
+        if (!u) { router.push('/profile'); return null; }
         setWorld(w);
         setUser(u);
         return fetch(`${API}/api/characters?userId=${u.id}&worldId=${w.id}`).then((r) => r.json());
       })
-      .then(({ characters: chars }: { characters: Character[] }) => {
+      .then((result) => {
+        if (!result) return;
+        const { characters: chars } = result as { characters: Character[] };
         setCharacters(chars ?? []);
         // If preselected character passed from profile page, go straight to play
         if (preselectedId && chars.find((c) => c.id === preselectedId)) {
