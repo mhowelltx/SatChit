@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, use } from 'react';
+import { Suspense, useState, useEffect, use } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { fetchCurrentUser } from '@/lib/auth';
@@ -36,7 +36,7 @@ const labelStyle: React.CSSProperties = { color: 'var(--text-muted)', fontSize: 
 const inputStyle: React.CSSProperties = { width: '100%', fontSize: '0.9rem' };
 const rowStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' };
 
-export default function CharactersPage({ params }: { params: Promise<{ slug: string }> }) {
+function CharactersPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = use(params);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -317,5 +317,13 @@ export default function CharactersPage({ params }: { params: Promise<{ slug: str
         </form>
       )}
     </main>
+  );
+}
+
+export default function CharactersPageWrapper({ params }: { params: Promise<{ slug: string }> }) {
+  return (
+    <Suspense fallback={<main style={{ maxWidth: '640px', margin: '0 auto', padding: '2rem' }}><p style={{ color: 'var(--text-muted)' }}>Loading…</p></main>}>
+      <CharactersPage params={params} />
+    </Suspense>
   );
 }

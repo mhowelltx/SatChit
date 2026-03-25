@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -148,7 +148,7 @@ function AuthForm({ onAuth, returnTo }: { onAuth: (user: CurrentUser) => void; r
 
 // ── Profile view ──────────────────────────────────────────────────────────────
 
-export default function ProfilePage() {
+function ProfilePage() {
   const searchParams = useSearchParams();
   const returnTo = searchParams.get('returnTo');
   const [user, setUser] = useState<CurrentUser | null | 'loading'>('loading');
@@ -366,5 +366,13 @@ export default function ProfilePage() {
         })}
       </section>
     </main>
+  );
+}
+
+export default function ProfilePageWrapper() {
+  return (
+    <Suspense fallback={<main style={{ maxWidth: '640px', margin: '0 auto', padding: '2rem' }}><p style={{ color: 'var(--text-muted)' }}>Loading…</p></main>}>
+      <ProfilePage />
+    </Suspense>
   );
 }
