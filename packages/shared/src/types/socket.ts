@@ -6,6 +6,7 @@ export interface SessionJoinPayload {
   worldId: string;
   worldSlug?: string;
   playerId: string;
+  characterId?: string;
 }
 
 export interface PlayerActionPayload {

@@ -33,10 +33,11 @@ export function registerSocketHandlers(
     let activeSessionId: string | null = null;
     let activeWorldId: string | null = null;
     let activeZoneSlug: string | null = null;
+    let activeCharacterId: string | null = null;
 
     socket.on('session:join', async (payload: SessionJoinPayload) => {
       try {
-        const { worldId, worldSlug, playerId } = payload;
+        const { worldId, worldSlug, playerId, characterId } = payload;
 
         const world = worldSlug
           ? await prisma.world.findUnique({ where: { slug: worldSlug } })
@@ -50,7 +51,13 @@ export function registerSocketHandlers(
         const resolvedPlayerId =
           playerId && playerId !== 'placeholder-player-id' ? playerId : world.creatorId;
 
-        const session = await sessionService.create(world.id, resolvedPlayerId);
+        // Optionally resolve character
+        const character = characterId
+          ? await prisma.character.findUnique({ where: { id: characterId } })
+          : null;
+        activeCharacterId = character?.id ?? null;
+
+        const session = await sessionService.create(world.id, resolvedPlayerId, activeCharacterId ?? undefined);
         activeSessionId = session.id;
         activeWorldId = world.id;
 
@@ -120,6 +127,7 @@ export function registerSocketHandlers(
           activeZoneSlug,
           payload.input,
           session.playerId,
+          activeCharacterId ? await prisma.character.findUnique({ where: { id: activeCharacterId } }) as any : null,
         );
 
         await sessionService.recordAction(activeSessionId, payload.input, result.narration);
@@ -205,6 +213,7 @@ export function registerSocketHandlers(
             targetSlug,
             'enter',
             session.playerId,
+            activeCharacterId ? await prisma.character.findUnique({ where: { id: activeCharacterId } }) as any : null,
           );
           zone = result.zone;
 

@@ -27,11 +27,26 @@ model User {
   role         UserRole @default(PLAYER)
   createdAt    DateTime @default(now())
 
-  createdWorlds  World[]
-  gameSessions   GameSession[]
-  discoveredZones VedaZone[]  @relation("ZoneDiscoverer")
+  profile         UserProfile?
+  createdWorlds   World[]
+  gameSessions    GameSession[]
+  characters      Character[]
+  discoveredZones VedaZone[] @relation("ZoneDiscoverer")
 
   @@map("users")
+}
+
+model UserProfile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  bio       String?
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
 }
 
 // ── Worlds ────────────────────────────────────────────────────────────────────
@@ -54,12 +69,15 @@ model World {
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
-  creator      User          @relation(fields: [creatorId], references: [id])
-  zones        VedaZone[]
-  entities     VedaEntity[]
-  events       VedaEvent[]
-  lore         VedaLore[]
-  sessions     GameSession[]
+  creator    User          @relation(fields: [creatorId], references: [id])
+  zones      VedaZone[]
+  entities   VedaEntity[]
+  events     VedaEvent[]
+  lore       VedaLore[]
+  sessions   GameSession[]
+  characters Character[]
+  npcs       NPC[]
+  items      Item[]
 
   @@map("worlds")
 }
@@ -68,19 +86,22 @@ model World {
 
 // A location/zone players can explore
 model VedaZone {
-  id             String   @id @default(cuid())
-  worldId        String
-  name           String
-  slug           String
-  description    String
-  rawContent     String   // Full AI-generated text stored verbatim
-  discoveredById String?
-  discoveredAt   DateTime @default(now())
+  id               String   @id @default(cuid())
+  worldId          String
+  name             String
+  slug             String
+  description      String
+  rawContent       String   // Full AI-generated text stored verbatim
+  discoveredById   String?
+  ownerCharacterId String?  // Character who owns this location (home, etc.)
+  discoveredAt     DateTime @default(now())
 
   world        World        @relation(fields: [worldId], references: [id], onDelete: Cascade)
   discoveredBy User?        @relation("ZoneDiscoverer", fields: [discoveredById], references: [id])
+  owner        Character?   @relation("OwnedZones", fields: [ownerCharacterId], references: [id])
   entities     VedaEntity[]
   sessions     GameSession[]
+  npcsHere     NPC[]
 
   @@unique([worldId, slug])
   @@map("veda_zones")
@@ -93,7 +114,7 @@ enum EntityType {
   OBJECT
 }
 
-// An entity encountered in the world
+// An entity encountered in the world (Veda's knowledge record)
 model VedaEntity {
   id           String     @id @default(cuid())
   worldId      String
@@ -106,6 +127,7 @@ model VedaEntity {
 
   world World     @relation(fields: [worldId], references: [id], onDelete: Cascade)
   zone  VedaZone? @relation(fields: [zoneId], references: [id])
+  npc   NPC?
 
   @@map("veda_entities")
 }
@@ -144,6 +166,113 @@ model VedaLore {
   @@map("veda_lore")
 }
 
+// ── Characters ────────────────────────────────────────────────────────────────
+
+// A player's avatar within a specific world
+model Character {
+  id                  String   @id @default(cuid())
+  userId              String
+  worldId             String
+  name                String
+  species             String?
+  race                String?
+  gender              String?
+  age                 Int?
+  physicalDescription String?
+  traits              String[] // Personality traits
+  skills              Json     @default("{}") // skill -> level map
+  abilities           String[]
+  backstory           String?
+  stats               Json     @default("{}") // health, mana, xp, etc.
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user      User            @relation(fields: [userId], references: [id])
+  world     World           @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  inventory CharacterItem[]
+  sessions  GameSession[]
+  ownedZones VedaZone[]     @relation("OwnedZones")
+
+  @@unique([userId, worldId, name])
+  @@map("characters")
+}
+
+// ── NPCs ──────────────────────────────────────────────────────────────────────
+
+// A persistent NPC generated through world exploration
+model NPC {
+  id                  String   @id @default(cuid())
+  worldId             String
+  vedaEntityId        String?  @unique // Link to Veda knowledge record
+  currentZoneId       String?
+  name                String
+  species             String?
+  race                String?
+  gender              String?
+  age                 Int?
+  physicalDescription String?
+  traits              String[]
+  skills              Json     @default("{}")
+  abilities           String[]
+  backstory           String?
+  disposition         String   @default("neutral") // friendly, neutral, hostile, wary, etc.
+  stats               Json     @default("{}")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  world       World       @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  vedaEntity  VedaEntity? @relation(fields: [vedaEntityId], references: [id])
+  currentZone VedaZone?   @relation(fields: [currentZoneId], references: [id])
+  inventory   NPCItem[]
+
+  @@map("npcs")
+}
+
+// ── Items ─────────────────────────────────────────────────────────────────────
+
+model Item {
+  id          String   @id @default(cuid())
+  worldId     String
+  name        String
+  description String
+  itemType    String   // weapon, armor, consumable, key, document, misc, etc.
+  attributes  Json     @default("{}")
+  createdAt   DateTime @default(now())
+
+  world          World           @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  characterItems CharacterItem[]
+  npcItems       NPCItem[]
+
+  @@map("items")
+}
+
+// Character inventory entry
+model CharacterItem {
+  id          String  @id @default(cuid())
+  characterId String
+  itemId      String
+  quantity    Int     @default(1)
+  isEquipped  Boolean @default(false)
+
+  character Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  item      Item      @relation(fields: [itemId], references: [id])
+
+  @@map("character_items")
+}
+
+// NPC inventory entry
+model NPCItem {
+  id       String @id @default(cuid())
+  npcId    String
+  itemId   String
+  quantity Int    @default(1)
+
+  npc  NPC  @relation(fields: [npcId], references: [id], onDelete: Cascade)
+  item Item @relation(fields: [itemId], references: [id])
+
+  @@map("npc_items")
+}
+
 // ── Sessions ──────────────────────────────────────────────────────────────────
 
 enum SessionStatus {
@@ -155,12 +284,14 @@ model GameSession {
   id            String        @id @default(cuid())
   worldId       String
   playerId      String
+  characterId   String?
   currentZoneId String?
   status        SessionStatus @default(ACTIVE)
   startedAt     DateTime      @default(now())
 
   world       World       @relation(fields: [worldId], references: [id])
   player      User        @relation(fields: [playerId], references: [id])
+  character   Character?  @relation(fields: [characterId], references: [id])
   currentZone VedaZone?   @relation(fields: [currentZoneId], references: [id])
   actions     PlayerAction[]
 

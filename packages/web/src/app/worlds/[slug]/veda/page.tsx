@@ -32,6 +32,23 @@ interface VedaLore {
   createdAt: string;
 }
 
+interface NPC {
+  id: string;
+  name: string;
+  species: string | null;
+  race: string | null;
+  gender: string | null;
+  age: number | null;
+  physicalDescription: string | null;
+  traits: string[];
+  skills: Record<string, number>;
+  abilities: string[];
+  backstory: string | null;
+  disposition: string;
+  currentZone: { name: string; slug: string } | null;
+  updatedAt: string;
+}
+
 interface VedaData {
   zones: VedaZone[];
   entities: VedaEntity[];
@@ -47,6 +64,27 @@ async function getVeda(slug: string): Promise<VedaData | null> {
     return res.json() as Promise<VedaData>;
   } catch {
     return null;
+  }
+}
+
+async function getNPCs(slug: string): Promise<NPC[]> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  try {
+    const res = await fetch(`${apiUrl}/api/worlds/${slug}/npcs`, { cache: 'no-store' });
+    if (!res.ok) return [];
+    const data = await res.json() as { npcs: NPC[] };
+    return data.npcs;
+  } catch {
+    return [];
+  }
+}
+
+function dispositionColor(d: string): string {
+  switch (d) {
+    case 'friendly': return 'var(--success)';
+    case 'hostile': return 'var(--error)';
+    case 'wary': return 'var(--warning)';
+    default: return 'var(--text-muted)';
   }
 }
 
@@ -76,7 +114,7 @@ const tag: React.CSSProperties = {
 
 export default async function VedaPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const veda = await getVeda(slug);
+  const [veda, npcs] = await Promise.all([getVeda(slug), getNPCs(slug)]);
 
   if (!veda) {
     return (
@@ -90,6 +128,7 @@ export default async function VedaPage({ params }: { params: Promise<{ slug: str
   const { zones, entities, lore, recentEvents } = veda;
   const counts = [
     `${zones.length} zone${zones.length !== 1 ? 's' : ''}`,
+    `${npcs.length} npc${npcs.length !== 1 ? 's' : ''}`,
     `${entities.length} entit${entities.length !== 1 ? 'ies' : 'y'}`,
     `${lore.length} lore`,
     `${recentEvents.length} event${recentEvents.length !== 1 ? 's' : ''}`,
@@ -132,7 +171,59 @@ export default async function VedaPage({ params }: { params: Promise<{ slug: str
         ))}
       </section>
 
-      {/* Entities */}
+      {/* NPCs */}
+      <section style={{ marginBottom: '2.5rem' }}>
+        <h3 style={sectionLabel}>NPCs ({npcs.length})</h3>
+        {npcs.length === 0 && <p style={{ color: 'var(--text-muted)' }}>None encountered yet.</p>}
+        {npcs.map((n) => (
+          <div key={n.id} style={card}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>{n.name}</span>
+              {n.species && <span style={tag}>{n.species}</span>}
+              {n.race && n.race !== n.species && <span style={tag}>{n.race}</span>}
+              {n.gender && <span style={tag}>{n.gender}</span>}
+              <span style={{ ...tag, borderColor: dispositionColor(n.disposition), color: dispositionColor(n.disposition) }}>
+                {n.disposition}
+              </span>
+            </div>
+            {n.currentZone && (
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '0.3rem' }}>
+                Last seen: {n.currentZone.name}
+              </div>
+            )}
+            {n.physicalDescription && (
+              <div style={{ color: 'var(--text)', fontSize: '0.9rem', marginBottom: '0.4rem' }}>{n.physicalDescription}</div>
+            )}
+            {n.traits.length > 0 && (
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.4rem' }}>
+                {n.traits.map((t, i) => <span key={i} style={tag}>{t}</span>)}
+              </div>
+            )}
+            {n.backstory && (
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', fontStyle: 'italic', marginBottom: '0.4rem' }}>
+                {n.backstory}
+              </div>
+            )}
+            {(n.abilities.length > 0 || Object.keys(n.skills).length > 0) && (
+              <details>
+                <summary style={{ color: 'var(--text-muted)', fontSize: '0.8rem', cursor: 'pointer' }}>Skills & Abilities</summary>
+                <div style={{ marginTop: '0.4rem', fontSize: '0.85rem', color: 'var(--text)' }}>
+                  {Object.keys(n.skills).length > 0 && (
+                    <div style={{ marginBottom: '0.3rem' }}>
+                      {Object.entries(n.skills).map(([skill, level]) => (
+                        <span key={skill} style={{ ...tag, marginRight: '0.3rem' }}>{skill} {level}</span>
+                      ))}
+                    </div>
+                  )}
+                  {n.abilities.map((a, i) => <span key={i} style={{ ...tag, marginRight: '0.3rem' }}>{a}</span>)}
+                </div>
+              </details>
+            )}
+          </div>
+        ))}
+      </section>
+
+      {/* Entities (Veda knowledge records) */}
       <section style={{ marginBottom: '2.5rem' }}>
         <h3 style={sectionLabel}>Entities ({entities.length})</h3>
         {entities.length === 0 && <p style={{ color: 'var(--text-muted)' }}>None recorded.</p>}

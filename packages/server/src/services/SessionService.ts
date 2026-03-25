@@ -4,7 +4,7 @@ import type { GameSession } from '@satchit/shared';
 export class SessionService {
   constructor(private prisma: PrismaClient) {}
 
-  async create(worldId: string, playerId: string): Promise<GameSession> {
+  async create(worldId: string, playerId: string, characterId?: string): Promise<GameSession> {
     // End any existing active sessions for this player in this world
     await this.prisma.gameSession.updateMany({
       where: { worldId, playerId, status: 'ACTIVE' },
@@ -12,7 +12,7 @@ export class SessionService {
     });
 
     const session = await this.prisma.gameSession.create({
-      data: { worldId, playerId },
+      data: { worldId, playerId, characterId: characterId ?? null },
     });
     return session as GameSession;
   }

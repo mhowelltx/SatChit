@@ -3,3 +3,6 @@ export * from './types/world.js';
 export * from './types/veda.js';
 export * from './types/session.js';
 export * from './types/socket.js';
+export * from './types/character.js';
+export * from './types/npc.js';
+export * from './types/item.js';

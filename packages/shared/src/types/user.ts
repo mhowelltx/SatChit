@@ -13,3 +13,13 @@ export interface UserPublic {
   username: string;
   role: UserRole;
 }
+
+export interface UserProfile {
+  id: string;
+  userId: string;
+  bio: string | null;
+  avatarUrl: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
