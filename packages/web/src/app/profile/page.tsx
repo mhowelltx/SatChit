@@ -1,0 +1,261 @@
+'use client';
+
+import { Suspense, useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import {
+  fetchCurrentUser,
+  clearStoredUserId,
+  type CurrentUser,
+} from '@/lib/auth';
+import AuthForm from '@/components/AuthForm';
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+
+interface Character {
+  id: string;
+  name: string;
+  species: string | null;
+  race: string | null;
+  gender: string | null;
+  traits: string[];
+  worldId: string;
+}
+
+interface WorldInfo {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+const fieldStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: '0.35rem', marginBottom: '1.1rem' };
+const labelStyle: React.CSSProperties = { color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.1em' };
+const inputStyle: React.CSSProperties = { width: '100%', fontSize: '0.9rem' };
+const sectionHead: React.CSSProperties = { color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.12em', margin: '0 0 0.75rem' };
+
+function ProfilePage() {
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get('returnTo');
+
+  const [user, setUser] = useState<CurrentUser | null | 'loading'>('loading');
+  const [bio, setBio] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [worlds, setWorlds] = useState<Record<string, WorldInfo>>({});
+
+  useEffect(() => {
+    fetchCurrentUser().then((u) => {
+      setUser(u);
+      if (u) {
+        setBio(u.profile?.bio ?? '');
+        setAvatarUrl(u.profile?.avatarUrl ?? '');
+        loadCharacters(u.id);
+      }
+    });
+  }, []);
+
+  function loadCharacters(userId: string) {
+    fetch(`${API}/api/characters?userId=${userId}`)
+      .then((r) => r.json())
+      .then(async ({ characters: chars }: { characters: Character[] }) => {
+        setCharacters(chars ?? []);
+        const ids = [...new Set((chars ?? []).map((c) => c.worldId))];
+        const worldsRes = await fetch(`${API}/api/worlds`).then((r) => r.json()) as { worlds: WorldInfo[] };
+        const map: Record<string, WorldInfo> = {};
+        for (const w of worldsRes.worlds ?? []) {
+          if (ids.includes(w.id)) map[w.id] = w;
+        }
+        setWorlds(map);
+      })
+      .catch(console.error);
+  }
+
+  async function saveProfile() {
+    if (!user || user === 'loading') return;
+    setSaving(true);
+    try {
+      await fetch(`${API}/api/auth/users/${user.id}/profile`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bio: bio || null, avatarUrl: avatarUrl || null }),
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleAuth(u: CurrentUser) {
+    setUser(u);
+    setBio(u.profile?.bio ?? '');
+    setAvatarUrl(u.profile?.avatarUrl ?? '');
+    loadCharacters(u.id);
+  }
+
+  function handleSignOut() {
+    clearStoredUserId();
+    setUser(null);
+    setCharacters([]);
+  }
+
+  if (user === 'loading') {
+    return (
+      <main style={{ maxWidth: '640px', margin: '0 auto', padding: '2rem' }}>
+        <p style={{ color: 'var(--text-muted)' }}>Loading…</p>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return (
+      <main style={{ maxWidth: '640px', margin: '0 auto', padding: '2rem' }}>
+        <Link href="/" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>← Home</Link>
+        <div style={{ marginTop: '2.5rem' }}>
+          <AuthForm
+            onAuth={handleAuth}
+            context={returnTo ? `Sign in to continue to ${returnTo}` : 'Sign in to view your profile.'}
+          />
+        </div>
+      </main>
+    );
+  }
+
+  const byWorld = characters.reduce<Record<string, Character[]>>((acc, c) => {
+    (acc[c.worldId] ??= []).push(c);
+    return acc;
+  }, {});
+
+  return (
+    <main style={{ maxWidth: '640px', margin: '0 auto', padding: '2rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+        <Link href="/worlds" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>← Worlds</Link>
+        <button
+          onClick={handleSignOut}
+          style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.8rem', cursor: 'pointer' }}
+        >
+          Sign Out
+        </button>
+      </div>
+
+      {/* Identity */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', marginBottom: '2rem' }}>
+        <div
+          style={{
+            width: '56px', height: '56px', borderRadius: '50%',
+            background: 'var(--accent-dim)', border: '2px solid var(--accent)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '1.4rem', flexShrink: 0, overflow: 'hidden',
+          }}
+        >
+          {avatarUrl
+            // eslint-disable-next-line @next/next/no-img-element
+            ? <img src={avatarUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            : user.username[0].toUpperCase()}
+        </div>
+        <div>
+          <div style={{ color: 'var(--accent)', fontWeight: 'bold', fontSize: '1.1rem' }}>{user.username}</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+            {user.role.toLowerCase()} · joined {new Date(user.createdAt).toLocaleDateString()}
+          </div>
+        </div>
+      </div>
+
+      {/* Profile edit */}
+      <section style={{ marginBottom: '2.5rem' }}>
+        <h3 style={sectionHead}>Profile</h3>
+
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Bio</label>
+          <textarea
+            rows={3}
+            style={{ ...inputStyle, resize: 'vertical' }}
+            value={bio}
+            onChange={(e) => setBio(e.target.value)}
+            placeholder="A few words about yourself…"
+          />
+        </div>
+
+        <div style={fieldStyle}>
+          <label style={labelStyle}>Avatar URL</label>
+          <input
+            type="url"
+            style={inputStyle}
+            value={avatarUrl}
+            onChange={(e) => setAvatarUrl(e.target.value)}
+            placeholder="https://…"
+          />
+        </div>
+
+        <button
+          onClick={saveProfile}
+          disabled={saving}
+          style={{
+            background: saved ? 'var(--success)' : 'var(--accent)',
+            color: '#fff', border: 'none', borderRadius: '4px',
+            padding: '0.5rem 1.5rem', fontSize: '0.9rem',
+            opacity: saving ? 0.6 : 1,
+          }}
+        >
+          {saved ? 'Saved' : saving ? 'Saving…' : 'Save Profile'}
+        </button>
+      </section>
+
+      {/* Characters */}
+      <section>
+        <h3 style={sectionHead}>Characters ({characters.length})</h3>
+        {characters.length === 0 && (
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+            No characters yet.{' '}
+            <Link href="/worlds" style={{ color: 'var(--accent)' }}>Enter a world to create one.</Link>
+          </p>
+        )}
+        {Object.entries(byWorld).map(([worldId, chars]) => {
+          const world = worlds[worldId];
+          return (
+            <div key={worldId} style={{ marginBottom: '1.5rem' }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+                {world
+                  ? <Link href={`/worlds/${world.slug}`} style={{ color: 'var(--text-muted)' }}>{world.name}</Link>
+                  : worldId}
+              </div>
+              {chars.map((c) => (
+                <div key={c.id} style={{ borderLeft: '2px solid var(--border)', paddingLeft: '1rem', marginBottom: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+                  <div>
+                    <div style={{ color: 'var(--accent)', fontWeight: 'bold' }}>{c.name}</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                      {[c.species, c.race, c.gender].filter(Boolean).join(' · ') || 'No details yet'}
+                    </div>
+                    {c.traits.length > 0 && (
+                      <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.2rem' }}>
+                        {c.traits.slice(0, 4).join(', ')}
+                      </div>
+                    )}
+                  </div>
+                  {world && (
+                    <Link
+                      href={`/worlds/${world.slug}/characters?characterId=${c.id}`}
+                      style={{ fontSize: '0.8rem', color: 'var(--accent)', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >
+                      Embody →
+                    </Link>
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </section>
+    </main>
+  );
+}
+
+export default function ProfilePageWrapper() {
+  return (
+    <Suspense fallback={<main style={{ maxWidth: '640px', margin: '0 auto', padding: '2rem' }}><p style={{ color: 'var(--text-muted)' }}>Loading…</p></main>}>
+      <ProfilePage />
+    </Suspense>
+  );
+}

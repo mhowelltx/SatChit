@@ -1,0 +1,112 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { fetchCurrentUser, onAuthChange, type CurrentUser } from '@/lib/auth';
+import AuthForm from '@/components/AuthForm';
+
+const logo = `
+ __     __       _
+ \\ \\   / /__  __| | __ _
+  \\ \\ / / _ \\/ _\` |/ _\` |
+   \\ V /  __/ (_| | (_| |
+    \\_/ \\___|\\__,_|\\__,_|
+
+ __        __         _     _   ____
+ \\ \\      / /__  _ __| | __| | / ___|  ___  _ __   __ _
+  \\ \\ /\\ / / _ \\| '__| |/ _\` | \\___ \\ / _ \\| '_ \\/ _\` |
+   \\ V  V / (_) | |  | | (_| |  ___) | (_) | | | | (_| |
+    \\_/\\_/ \\___/|_|  |_|\\__,_| |____/ \\___/|_| |_|\\__, |
+                                                    |___/
+`;
+
+export default function HomePage() {
+  const [user, setUser] = useState<CurrentUser | null | 'loading'>('loading');
+
+  useEffect(() => {
+    fetchCurrentUser().then(setUser);
+    return onAuthChange(() => fetchCurrentUser().then(setUser));
+  }, []);
+
+  function handleAuth(u: CurrentUser) {
+    setUser(u);
+  }
+
+  // Shared logo/tagline block
+  const header = (
+    <>
+      <pre
+        style={{
+          color: 'var(--accent)',
+          fontSize: '0.8rem',
+          lineHeight: 1.2,
+          marginBottom: '2rem',
+          userSelect: 'none',
+        }}
+      >
+        {logo}
+      </pre>
+      <p
+        style={{
+          maxWidth: '480px',
+          color: 'var(--text-muted)',
+          marginBottom: '2.5rem',
+          fontSize: '1rem',
+        }}
+      >
+        AI-generated worlds written into being through exploration.
+        <br />
+        Every act you make sings the world into being.
+      </p>
+    </>
+  );
+
+  if (user === 'loading') {
+    return (
+      <main style={{ minHeight: '80vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', textAlign: 'center' }}>
+        {header}
+      </main>
+    );
+  }
+
+  if (!user) {
+    return (
+      <main style={{ minHeight: '80vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', textAlign: 'center' }}>
+        {header}
+        <div style={{ textAlign: 'left' }}>
+          <AuthForm onAuth={handleAuth} context="Sign in or create an account to begin." />
+        </div>
+      </main>
+    );
+  }
+
+  // Logged in
+  return (
+    <main style={{ minHeight: '80vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem', textAlign: 'center' }}>
+      {header}
+
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '2rem' }}>
+        Welcome back,{' '}
+        <Link href="/profile" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+          {user.username}
+        </Link>
+        .
+      </p>
+
+      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+        <Link
+          href="/worlds"
+          style={{ padding: '0.75rem 1.5rem', background: 'var(--accent)', color: '#fff', borderRadius: '4px', fontWeight: 'bold', textDecoration: 'none' }}
+        >
+          Explore Worlds
+        </Link>
+        <Link
+          href="/worlds/create"
+          style={{ padding: '0.75rem 1.5rem', border: '1px solid var(--accent)', color: 'var(--accent)', borderRadius: '4px', textDecoration: 'none' }}
+        >
+          Create a World
+        </Link>
+      </div>
+    </main>
+  );
+}
