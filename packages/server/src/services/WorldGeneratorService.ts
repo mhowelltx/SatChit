@@ -240,7 +240,7 @@ export class WorldGeneratorService {
         `Read this narration and extract any named NPCs (people, creatures with names, significant beings) who appear.
          Only include NPCs that are clearly present and interacted with. Return an empty array if none.
          Narration: "${narration}"`,
-        { worldName: world.name, zoneName: zone.name },
+        { world: { name: world.name, foundationalLaws: world.foundationalLaws ?? [], culturalTypologies: world.culturalTypologies ?? [] } },
         npcShape,
       );
 

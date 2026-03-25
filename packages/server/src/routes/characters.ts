@@ -9,8 +9,8 @@ export function createCharactersRouter(prisma: PrismaClient): Router {
   // POST /api/characters  { userId, worldId, ...characterFields }
   router.post('/', async (req, res) => {
     try {
-      const { userId, worldId, name, species, race, gender, age, physicalDescription, traits, skills, abilities, backstory } =
-        req.body as { userId: string; worldId: string } & CreateCharacterInput;
+      const { userId, worldId, name, species, race, gender, age, physicalDescription, traits, skills, abilities, backstory, customAttributes } =
+        req.body as { userId: string; worldId: string; customAttributes?: Record<string, unknown> } & CreateCharacterInput;
 
       if (!userId || !worldId || !name) {
         return res.status(400).json({ error: 'userId, worldId, and name are required.' });
@@ -30,6 +30,7 @@ export function createCharactersRouter(prisma: PrismaClient): Router {
           skills: (skills ?? {}) as object,
           abilities: abilities ?? [],
           backstory: backstory ?? null,
+          customAttributes: (customAttributes ?? {}) as object,
         },
       });
 
@@ -85,8 +86,8 @@ export function createCharactersRouter(prisma: PrismaClient): Router {
   // Update a character
   router.patch('/:id', async (req, res) => {
     try {
-      const { name, species, race, gender, age, physicalDescription, traits, skills, abilities, backstory, stats } =
-        req.body as Partial<CreateCharacterInput> & { stats?: Record<string, unknown> };
+      const { name, species, race, gender, age, physicalDescription, traits, skills, abilities, backstory, stats, customAttributes } =
+        req.body as Partial<CreateCharacterInput> & { stats?: Record<string, unknown>; customAttributes?: Record<string, unknown> };
 
       const character = await prisma.character.update({
         where: { id: req.params.id },
@@ -101,6 +102,7 @@ export function createCharactersRouter(prisma: PrismaClient): Router {
           ...(skills !== undefined && { skills: skills as object }),
           ...(abilities !== undefined && { abilities }),
           ...(backstory !== undefined && { backstory }),
+          ...(customAttributes !== undefined && { customAttributes: customAttributes as object }),
           ...(stats !== undefined && { stats: stats as object }),
         },
       });

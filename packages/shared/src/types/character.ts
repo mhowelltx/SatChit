@@ -12,7 +12,8 @@ export interface Character {
   skills: Record<string, number>;  // skill -> level
   abilities: string[];
   backstory: string | null;
-  stats: Record<string, unknown>;  // health, mana, xp, etc.
+  stats: Record<string, unknown>;        // health, mana, xp, etc.
+  customAttributes: Record<string, unknown>; // world-specific fields from WorldCharacterTemplate
   createdAt: Date;
   updatedAt: Date;
 }

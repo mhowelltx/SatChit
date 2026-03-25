@@ -69,17 +69,31 @@ model World {
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
 
-  creator    User          @relation(fields: [creatorId], references: [id])
-  zones      VedaZone[]
-  entities   VedaEntity[]
-  events     VedaEvent[]
-  lore       VedaLore[]
-  sessions   GameSession[]
-  characters Character[]
-  npcs       NPC[]
-  items      Item[]
+  creator           User                   @relation(fields: [creatorId], references: [id])
+  zones             VedaZone[]
+  entities          VedaEntity[]
+  events            VedaEvent[]
+  lore              VedaLore[]
+  sessions          GameSession[]
+  characters        Character[]
+  npcs              NPC[]
+  items             Item[]
+  characterTemplate WorldCharacterTemplate?
 
   @@map("worlds")
+}
+
+// AI-generated per-world character creation template
+model WorldCharacterTemplate {
+  id            String   @id @default(cuid())
+  worldId       String   @unique
+  templateJson  Json     // structured template: factions, customAttributes, stats, affinities, etc.
+  generatedAt   DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@map("world_character_templates")
 }
 
 // ── Veda ──────────────────────────────────────────────────────────────────────
@@ -184,6 +198,7 @@ model Character {
   abilities           String[]
   backstory           String?
   stats               Json     @default("{}") // health, mana, xp, etc.
+  customAttributes    Json     @default("{}") // world-specific fields from WorldCharacterTemplate
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 

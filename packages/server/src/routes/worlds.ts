@@ -4,11 +4,13 @@ import type { PrismaClient } from '@prisma/client';
 import type { IAIProvider } from '../ai/index.js';
 import { WorldGeneratorService } from '../services/WorldGeneratorService.js';
 import { VedaService } from '../services/VedaService.js';
+import { WorldTemplateService } from '../services/WorldTemplateService.js';
 
 export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Router {
   const router = Router();
   const worldGenerator = new WorldGeneratorService(prisma, ai);
   const vedaService = new VedaService(prisma);
+  const worldTemplateService = new WorldTemplateService(prisma, ai);
 
   // List public worlds
   router.get('/', async (req, res) => {
@@ -103,6 +105,39 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
     } catch (err) {
       console.error('POST /worlds error', err);
       res.status(500).json({ error: 'Failed to create world.' });
+    }
+  });
+
+  // Get (or generate) the AI character template for a world
+  // GET /api/worlds/:slug/character-template
+  // ?regenerate=true forces a fresh AI generation
+  router.get('/:slug/character-template', async (req, res) => {
+    try {
+      const world = await prisma.world.findUnique({ where: { slug: req.params.slug } });
+      if (!world) return res.status(404).json({ error: 'World not found.' });
+
+      const worldShape = {
+        id: world.id,
+        creatorId: world.creatorId,
+        name: world.name,
+        slug: world.slug,
+        description: world.description,
+        visibility: world.visibility as 'PUBLIC' | 'PRIVATE',
+        foundationalLaws: world.foundationalLaws,
+        culturalTypologies: world.culturalTypologies,
+        anthropicApiKey: world.anthropicApiKey,
+        createdAt: world.createdAt,
+        updatedAt: world.updatedAt,
+      };
+
+      const template = req.query.regenerate === 'true'
+        ? await worldTemplateService.generate(worldShape)
+        : await worldTemplateService.getOrGenerate(worldShape);
+
+      res.json({ template });
+    } catch (err) {
+      console.error('GET /worlds/:slug/character-template error', err);
+      res.status(500).json({ error: 'Failed to get character template.' });
     }
   });
 
