@@ -51,7 +51,9 @@ export class NPCService {
   }
 
   async findByName(worldId: string, name: string): Promise<NPC | null> {
-    const npc = await this.prisma.nPC.findFirst({ where: { worldId, name } });
+    const npc = await this.prisma.nPC.findFirst({
+      where: { worldId, name: { equals: name, mode: 'insensitive' } },
+    });
     return npc as unknown as NPC | null;
   }
 

@@ -2,6 +2,7 @@ import slugify from 'slugify';
 import type { PrismaClient } from '@prisma/client';
 import type { World, VedaZone, Character, WorldFeature } from '@satchit/shared';
 import type { IAIProvider } from '../ai/index.js';
+import type { TransientNPC } from '../ai/types.js';
 import { AnthropicProvider } from '../ai/providers/anthropic.js';
 import { VedaService } from './VedaService.js';
 import { NPCService } from './NPCService.js';
@@ -29,6 +30,8 @@ interface ActionResult {
   nextMood?: string;
   /** A player-built feature detected in this narration */
   newFeature?: WorldFeature;
+  /** Updated list of transient NPCs for the current zone after this action */
+  transientNPCsInZone?: TransientNPC[];
 }
 
 export class WorldGeneratorService {
@@ -139,6 +142,7 @@ export class WorldGeneratorService {
     zoneMessageCount = 0,
     sessionActionCount = 0,
     currentMood?: string,
+    transientNPCs: TransientNPC[] = [],
   ): Promise<ActionResult> {
     // Check Veda cache
     let zone = await this.vedaService.getZone(world.id, currentZoneSlug);
@@ -198,9 +202,10 @@ export class WorldGeneratorService {
       npcsPresent: npcsInZone.map((n) => ({
         name: n.name,
         disposition: n.disposition,
-        traits: n.traits,
-        physicalDescription: n.physicalDescription,
+        traits: n.traits as string[],
+        physicalDescription: n.physicalDescription as string | null,
       })),
+      transientNPCs,
       featuresPresent: featuresInZone.map((f) => ({
         name: f.name,
         featureType: f.featureType,
@@ -298,7 +303,7 @@ export class WorldGeneratorService {
     }
 
     // Attempt to extract and persist any new NPCs mentioned in the narration
-    await this.extractAndPersistNPCs(world, zone!, narration, ai);
+    const updatedTransientNPCs = await this.extractAndPersistNPCs(world, zone!, narration, playerId, transientNPCs, ai);
 
     // Attempt to detect and persist any player-built world features
     const newFeature = await this.extractAndPersistFeatures(
@@ -386,37 +391,54 @@ export class WorldGeneratorService {
       characterName: characterContext?.name,
       nextMood,
       ...(newFeature ? { newFeature } : {}),
+      transientNPCsInZone: updatedTransientNPCs,
     };
   }
 
   /**
-   * Ask the AI to extract any NPCs from the narration and persist them.
+   * Extract NPCs from the narration using two-tier classification:
+   * - nameRevealedToPlayer=true → persist to DB (Known NPC)
+   * - otherwise → add/update in-session transient list only
+   *
+   * Returns the updated transient NPC list for the zone.
    */
   private async extractAndPersistNPCs(
     world: World,
     zone: VedaZone,
     narration: string,
+    playerId: string,
+    existingTransientNPCs: TransientNPC[],
     ai: IAIProvider,
-  ): Promise<void> {
+  ): Promise<TransientNPC[]> {
+    // Start with a mutable copy of transient NPCs carried from prior actions
+    const transientMap = new Map<string, TransientNPC>(
+      existingTransientNPCs.map((t) => [t.role.toLowerCase(), t]),
+    );
+
     try {
       const npcShape = {
         npcs: [
           {
-            name: 'NPC name',
-            species: 'species or null',
-            race: 'race or null',
-            gender: 'gender or null',
-            physicalDescription: 'brief physical description',
-            traits: ['personality trait'],
-            disposition: 'friendly | neutral | wary | hostile',
-            backstory: 'one sentence backstory or null',
+            name: 'Rohan',
+            hasProperName: false,
+            nameRevealedToPlayer: false,
+            species: 'human',
+            race: 'null',
+            gender: 'male',
+            physicalDescription: 'tall with a grey beard',
+            traits: ['stoic', 'loyal'],
+            disposition: 'neutral',
+            backstory: 'null',
           },
         ],
       };
 
       const extracted = await ai.generateStructured(
-        `Read this narration and extract any named NPCs (people, creatures with names, significant beings) who appear.
-         Only include NPCs that are clearly present and interacted with. Return an empty array if none.
+        `Read this narration and extract every NPC (person, creature, or significant being) who appears.
+         For each NPC:
+         - Set hasProperName to true only if the NPC has a real personal name (not just a role like "a guard" or "the merchant").
+         - Set nameRevealedToPlayer to true ONLY if the NPC explicitly stated their name, was introduced by another character, or a nameplate/sign revealed it in THIS narration. Do NOT set it true just because you used a name in narration for narrative convenience.
+         Return an empty array if no NPCs appear.
          Narration: "${narration}"`,
         { world: { name: world.name, foundationalLaws: world.foundationalLaws ?? [], culturalTypologies: world.culturalTypologies ?? [] } },
         npcShape,
@@ -426,38 +448,56 @@ export class WorldGeneratorService {
 
       for (const npcData of npcs) {
         if (!npcData.name) continue;
+        const hasProperName = npcData.hasProperName === true;
+        const nameRevealedToPlayer = npcData.nameRevealedToPlayer === true;
 
-        const existing = await this.npcService.findByName(world.id, npcData.name);
-        if (existing) {
-          await this.npcService.updateZone(existing.id, zone.id);
-          continue;
+        if (hasProperName && nameRevealedToPlayer) {
+          // ── Known NPC: persist to DB ──────────────────────────────────────
+          const existing = await this.npcService.findByName(world.id, npcData.name);
+          if (existing) {
+            await this.npcService.updateZone(existing.id, zone.id);
+          } else {
+            const vedaEntity = await this.vedaService.saveEntity({
+              worldId: world.id,
+              zoneId: zone.id,
+              name: npcData.name,
+              entityType: 'NPC',
+              description: npcData.physicalDescription ?? npcData.name,
+            });
+            await this.npcService.create({
+              worldId: world.id,
+              vedaEntityId: vedaEntity.id,
+              currentZoneId: zone.id,
+              name: npcData.name,
+              species: npcData.species !== 'null' ? npcData.species : undefined,
+              race: npcData.race !== 'null' ? npcData.race : undefined,
+              gender: npcData.gender !== 'null' ? npcData.gender : undefined,
+              physicalDescription: npcData.physicalDescription,
+              traits: Array.isArray(npcData.traits) ? npcData.traits : [],
+              disposition: npcData.disposition ?? 'neutral',
+              backstory: npcData.backstory !== 'null' ? npcData.backstory : undefined,
+            });
+          }
+          // Remove from transient map if they were there before (now promoted to Known)
+          transientMap.delete(npcData.name.toLowerCase());
+        } else {
+          // ── Transient NPC: track in-session only ──────────────────────────
+          const role = hasProperName ? npcData.name : npcData.name;
+          const key = role.toLowerCase();
+          transientMap.set(key, {
+            role,
+            hasProperName,
+            disposition: npcData.disposition ?? 'neutral',
+            physicalDescription: npcData.physicalDescription || undefined,
+            traits: Array.isArray(npcData.traits) ? npcData.traits : [],
+          });
         }
-
-        const vedaEntity = await this.vedaService.saveEntity({
-          worldId: world.id,
-          zoneId: zone.id,
-          name: npcData.name,
-          entityType: 'NPC',
-          description: npcData.physicalDescription ?? npcData.name,
-        });
-
-        await this.npcService.create({
-          worldId: world.id,
-          vedaEntityId: vedaEntity.id,
-          currentZoneId: zone.id,
-          name: npcData.name,
-          species: npcData.species !== 'null' ? npcData.species : undefined,
-          race: npcData.race !== 'null' ? npcData.race : undefined,
-          gender: npcData.gender !== 'null' ? npcData.gender : undefined,
-          physicalDescription: npcData.physicalDescription,
-          traits: Array.isArray(npcData.traits) ? npcData.traits : [],
-          disposition: npcData.disposition ?? 'neutral',
-          backstory: npcData.backstory !== 'null' ? npcData.backstory : undefined,
-        });
       }
     } catch {
       // NPC extraction is best-effort
     }
+
+    return Array.from(transientMap.values());
   }
 
   /**

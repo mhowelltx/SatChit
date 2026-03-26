@@ -83,6 +83,22 @@ export function buildUserPrompt(prompt: string, context: GenerationContext): str
     parts.push(`What has happened here before:\n- ${history}`);
   }
 
+  // Known (Veda-registered) NPCs in this zone
+  if (context.npcsPresent && context.npcsPresent.length > 0) {
+    const lines = context.npcsPresent
+      .map((n) => `- ${n.name} (${n.disposition}${n.physicalDescription ? ': ' + n.physicalDescription : ''})`)
+      .join('\n');
+    parts.push(`Known characters present:\n${lines}`);
+  }
+
+  // Transient NPCs (in-session only — player has not learned their names)
+  if (context.transientNPCs && context.transientNPCs.length > 0) {
+    const lines = context.transientNPCs
+      .map((n) => `- ${n.role} (${n.disposition}${n.physicalDescription ? ': ' + n.physicalDescription : ''})`)
+      .join('\n');
+    parts.push(`Background characters present (names unknown to player):\n${lines}`);
+  }
+
   // NPC relationship context
   if (context.npcRelationships && Object.keys(context.npcRelationships).length > 0) {
     const relLines = Object.entries(context.npcRelationships)
