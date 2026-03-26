@@ -1,5 +1,15 @@
 import type { World, VedaZone, VedaLore } from '@satchit/shared';
 
+/** An NPC that appeared in narration but whose name has NOT been revealed to the player. */
+export interface TransientNPC {
+  /** Role description ("a guard") or personal name if hasProperName but not yet revealed */
+  role: string;
+  hasProperName: boolean;
+  disposition: string;
+  physicalDescription?: string;
+  traits: string[];
+}
+
 export interface GenerationContext {
   world: Pick<World, 'name' | 'foundationalLaws' | 'culturalTypologies'>;
   currentZone?: VedaZone | null;
@@ -18,6 +28,10 @@ export interface GenerationContext {
   atmosphereTags?: string[];
   /** NPC name → relationship score (-100 hostile … +100 devoted) for this player. */
   npcRelationships?: Record<string, number>;
+  /** Known (Veda-registered) NPCs currently in this zone. */
+  npcsPresent?: Array<{ name: string; disposition: string; traits: string[]; physicalDescription: string | null }>;
+  /** Transient NPCs in zone this session — unnamed/unintroduced characters. */
+  transientNPCs?: TransientNPC[];
 }
 
 export interface IAIProvider {

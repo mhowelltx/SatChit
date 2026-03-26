@@ -9,6 +9,7 @@ import type {
   NameMention,
 } from '@satchit/shared';
 import type { IAIProvider } from '../ai/index.js';
+import type { TransientNPC } from '../ai/types.js';
 import { AnthropicAPIError } from '../ai/providers/anthropic.js';
 
 function aiErrorMessage(err: unknown): string {
@@ -52,6 +53,8 @@ export function registerSocketHandlers(
     let currentMood: string | undefined;
     /** Recent zone slugs for breadcrumb trail (newest last) */
     const recentZones: string[] = [];
+    /** Transient (unintroduced) NPCs per zone slug — cleared only when session ends */
+    const transientNPCsByZone = new Map<string, TransientNPC[]>();
     /** Whether this player is a Rishi (cross-world avatar) */
     let isRishi = false;
     let rishiName: string | null = null;
@@ -150,6 +153,7 @@ export function registerSocketHandlers(
         zoneMessageCounts.set(activeZoneSlug, priorZoneCount + 1);
         sessionActionCount += 1;
 
+        const zoneTransientNPCs = transientNPCsByZone.get(activeZoneSlug) ?? [];
         const result = await worldGenerator.processAction(
           {
             id: world.id,
@@ -171,7 +175,13 @@ export function registerSocketHandlers(
           priorZoneCount,
           sessionActionCount,
           currentMood,
+          zoneTransientNPCs,
         );
+
+        // Persist the updated transient NPC list for this zone
+        if (result.transientNPCsInZone) {
+          transientNPCsByZone.set(activeZoneSlug, result.transientNPCsInZone);
+        }
 
         // Persist the new mood for the next exchange
         if (result.nextMood) {
