@@ -248,7 +248,11 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     socket.on('world:narration', (payload: NarrationPayload) => {
       setZoneSlug(payload.zoneSlug);
       zoneSlugRef.current = payload.zoneSlug;
-      sessionId.current = payload.sessionId;
+      // Only update sessionId when the payload carries one (observers receive narration
+      // payloads without a sessionId to avoid clobbering their own session with the actor's).
+      if (payload.sessionId) {
+        sessionId.current = payload.sessionId;
+      }
 
       // Update atmosphere tags and breadcrumb trail when zone changes
       if (payload.atmosphereTags) {
@@ -276,13 +280,16 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
       });
     });
 
-    // Actor-only: internal voice + personalized NPC speech
+    // Actor-only: internal voice + personalized NPC speech.
+    // Suggestions are anchored here when this event fires, so they appear after
+    // the final log entry rather than on the narrator entry that precedes it.
     socket.on('world:narration:personal', (payload: NarrationPayload) => {
       if (!payload.text) return;
       addLog({
         type: 'narration-internal',
         text: payload.text,
         timestamp: payload.timestamp,
+        suggestions: payload.suggestions,
       });
     });
 
