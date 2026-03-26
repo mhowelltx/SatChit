@@ -1,4 +1,4 @@
-import type { VedaZone, VedaEntity, VedaEvent, VedaLore, WorldFeature } from './veda.js';
+import type { VedaZone, VedaEntity, VedaEvent, VedaLore, WorldFeature, VedaZoneEdge } from './veda.js';
 
 // ── Client → Server ──────────────────────────────────────────────────────────
 
@@ -45,6 +45,16 @@ export interface NarrationPayload {
   mentions?: NameMention[];
   /** Atmosphere/mood tags for the current zone */
   atmosphereTags?: string[];
+  /** Known NPCs currently in this zone, for the environment panel */
+  zoneNpcs?: Array<{ name: string; disposition: string; relationshipScore?: number }>;
+}
+
+/** Sent once after session:join with world/character identity and the full discovered zone graph */
+export interface SessionInfoPayload {
+  worldName: string;
+  characterName: string | null;
+  mapZones: Array<{ slug: string; name: string }>;
+  mapEdges: Array<{ from: string; to: string }>;
 }
 
 export interface PlayerMovedPayload {
@@ -65,11 +75,11 @@ export interface PlayerLeftPayload {
   username: string;
 }
 
-export type VedaUpdateType = 'zone' | 'entity' | 'event' | 'lore' | 'feature';
+export type VedaUpdateType = 'zone' | 'entity' | 'event' | 'lore' | 'feature' | 'edge';
 
 export interface VedaUpdatePayload {
   type: VedaUpdateType;
-  data: VedaZone | VedaEntity | VedaEvent | VedaLore | WorldFeature;
+  data: VedaZone | VedaEntity | VedaEvent | VedaLore | WorldFeature | VedaZoneEdge;
 }
 
 export interface ErrorPayload {
@@ -110,6 +120,7 @@ export interface ServerToClientEvents {
   'player:left': (payload: PlayerLeftPayload) => void;
   'veda:update': (payload: VedaUpdatePayload) => void;
   'session:error': (payload: ErrorPayload) => void;
+  'session:info': (payload: SessionInfoPayload) => void;
   'zone:presence': (payload: ZonePresencePayload) => void;
   'player:action:echo': (payload: PlayerActionEchoPayload) => void;
   'zone:chat': (payload: ZoneChatPayload) => void;

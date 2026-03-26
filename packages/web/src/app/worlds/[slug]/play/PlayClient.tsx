@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { io, Socket } from 'socket.io-client';
 import { getStoredUserId } from '@/lib/auth';
 import type {
@@ -17,7 +18,9 @@ import type {
   PlayerActionEchoPayload,
   ZoneChatPayload,
   NameMention,
+  SessionInfoPayload,
 } from '@satchit/shared';
+import type { VedaZone } from '@satchit/shared';
 
 type AppSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
@@ -51,6 +54,14 @@ const MENTION_COLORS: Record<NameMention['type'], string> = {
   npc: 'var(--warning)',      // amber — NPCs
   pc: 'var(--success)',       // green — player characters
   rishi: '#FFD700',           // gold  — Rishi avatars
+};
+
+const DISPOSITION_COLORS: Record<string, string> = {
+  friendly: 'var(--success)',
+  neutral: 'var(--text-muted)',
+  wary: 'var(--warning)',
+  hostile: 'var(--error)',
+  unknown: 'var(--border)',
 };
 
 function parseInlineMarkdown(text: string): React.ReactNode[] {
@@ -111,6 +122,7 @@ function NarrationText({ text, mentions }: { text: string; mentions?: NameMentio
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: PlayClientProps) {
+  const router = useRouter();
   const [log, setLog] = useState<LogEntry[]>([]);
   const [input, setInput] = useState('');
   const [connected, setConnected] = useState(false);
@@ -118,6 +130,14 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
   const [atmosphereTags, setAtmosphereTags] = useState<string[]>([]);
   const [recentZones, setRecentZones] = useState<string[]>([]);
   const [zonePlayers, setZonePlayers] = useState<ZonePlayer[]>([]);
+  // Session identity
+  const [worldName, setWorldName] = useState<string>(worldSlug);
+  const [characterName, setCharacterName] = useState<string | null>(null);
+  // Zone NPC list with disposition + relationship score
+  const [zoneNpcs, setZoneNpcs] = useState<Array<{ name: string; disposition: string; relationshipScore?: number }>>([]);
+  // Mini zone map state
+  const [mapZones, setMapZones] = useState<Array<{ slug: string; name: string }>>([]);
+  const [mapEdges, setMapEdges] = useState<Array<{ from: string; to: string }>>([]);
   const socketRef = useRef<AppSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const sessionId = useRef<string>(PLACEHOLDER_SESSION_ID);
@@ -157,6 +177,11 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     [addLog],
   );
 
+  const handleDisembody = useCallback(() => {
+    socketRef.current?.disconnect();
+    router.push('/worlds');
+  }, [router]);
+
   useEffect(() => {
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? 'http://localhost:3001';
     const socket: AppSocket = io(wsUrl);
@@ -181,6 +206,13 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
       addLog({ type: 'system', text: 'Disconnected from server.', timestamp: new Date().toISOString() });
     });
 
+    socket.on('session:info', (payload: SessionInfoPayload) => {
+      setWorldName(payload.worldName);
+      setCharacterName(payload.characterName);
+      setMapZones(payload.mapZones);
+      setMapEdges(payload.mapEdges);
+    });
+
     socket.on('world:narration', (payload: NarrationPayload) => {
       setZoneSlug(payload.zoneSlug);
       zoneSlugRef.current = payload.zoneSlug;
@@ -189,6 +221,9 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
       // Update atmosphere tags and breadcrumb trail when zone changes
       if (payload.atmosphereTags) {
         setAtmosphereTags(payload.atmosphereTags);
+      }
+      if (payload.zoneNpcs) {
+        setZoneNpcs(payload.zoneNpcs);
       }
       setRecentZones((prev) => {
         const next = prev.filter((z) => z !== payload.zoneSlug);
@@ -265,11 +300,25 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     });
 
     socket.on('veda:update', (payload: VedaUpdatePayload) => {
-      addLog({
-        type: 'veda',
-        text: `[Veda] New ${payload.type} discovered and recorded.`,
-        timestamp: new Date().toISOString(),
-      });
+      if (payload.type === 'zone') {
+        const z = payload.data as VedaZone;
+        setMapZones(prev => prev.some(n => n.slug === z.slug) ? prev : [...prev, { slug: z.slug, name: z.name }]);
+      }
+      if (payload.type === 'edge') {
+        const e = payload.data as { fromZoneSlug: string; toZoneSlug: string };
+        setMapEdges(prev =>
+          prev.some(x => x.from === e.fromZoneSlug && x.to === e.toZoneSlug)
+            ? prev
+            : [...prev, { from: e.fromZoneSlug, to: e.toZoneSlug }],
+        );
+      }
+      if (payload.type !== 'edge') {
+        addLog({
+          type: 'veda',
+          text: `[Veda] New ${payload.type} discovered and recorded.`,
+          timestamp: new Date().toISOString(),
+        });
+      }
     });
 
     socket.on('session:error', (payload: ErrorPayload) => {
@@ -305,6 +354,44 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
   const lastNarrationIdx = log.reduce((acc, entry, idx) =>
     entry.type === 'narration' ? idx : acc, -1);
 
+  // Mini zone map: radial BFS layout
+  const mapLayout = useMemo(() => {
+    const W = 160, H = 120, cx = W / 2, cy = H / 2;
+    if (mapZones.length === 0) return { nodes: [] as Array<{ slug: string; name: string; x: number; y: number }>, edges: mapEdges };
+    const root = mapZones.find(z => z.slug === zoneSlug) ?? mapZones[0];
+    const positions: Record<string, { x: number; y: number }> = {};
+    const visited = new Set<string>();
+    const queue: Array<{ slug: string; depth: number; angle: number; spread: number }> = [
+      { slug: root.slug, depth: 0, angle: 0, spread: Math.PI * 2 },
+    ];
+    const radii = [0, 40, 72];
+    while (queue.length) {
+      const { slug, depth, angle, spread } = queue.shift()!;
+      if (visited.has(slug)) continue;
+      visited.add(slug);
+      const r = radii[Math.min(depth, radii.length - 1)];
+      positions[slug] = depth === 0
+        ? { x: cx, y: cy }
+        : { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
+      const children = mapEdges
+        .filter(e => e.from === slug || e.to === slug)
+        .map(e => (e.from === slug ? e.to : e.from))
+        .filter(s => !visited.has(s));
+      children.forEach((child, i) => {
+        const childAngle = angle - spread / 2 + (spread / Math.max(1, children.length)) * (i + 0.5);
+        queue.push({ slug: child, depth: depth + 1, angle: childAngle, spread: spread / 2 });
+      });
+    }
+    let unx = 8;
+    mapZones.forEach(z => {
+      if (!positions[z.slug]) { positions[z.slug] = { x: unx, y: H - 10 }; unx += 24; }
+    });
+    return {
+      nodes: mapZones.map(z => ({ ...z, ...(positions[z.slug] ?? { x: cx, y: cy }) })),
+      edges: mapEdges,
+    };
+  }, [mapZones, mapEdges, zoneSlug]);
+
   return (
     <div
       style={{
@@ -338,32 +425,6 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <Link href={`/worlds/${worldSlug}/characters`} style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                ← characters
-              </Link>
-              <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>{worldSlug}</span>
-            </div>
-
-            {/* Breadcrumb trail */}
-            {recentZones.length > 1 && (
-              <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                {recentZones.map((z, i) => (
-                  <span key={z} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                    {i > 0 && <span style={{ color: 'var(--border)', fontSize: '0.7rem' }}>›</span>}
-                    <span
-                      style={{
-                        color: z === zoneSlug ? 'var(--text)' : 'var(--text-muted)',
-                        fontSize: '0.75rem',
-                        fontStyle: z === zoneSlug ? 'normal' : 'italic',
-                      }}
-                    >
-                      {z}
-                    </span>
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}>
@@ -375,11 +436,6 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
               >
                 Veda ↗
               </Link>
-              {zoneSlug && (
-                <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                  {zoneSlug}
-                </span>
-              )}
               <span
                 style={{
                   width: '8px',
@@ -391,26 +447,6 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
               />
             </div>
 
-            {/* Atmosphere tags */}
-            {atmosphereTags.length > 0 && (
-              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                {atmosphereTags.map((tag) => (
-                  <span
-                    key={tag}
-                    style={{
-                      fontSize: '0.7rem',
-                      color: 'var(--text-muted)',
-                      border: '1px solid var(--border)',
-                      borderRadius: '3px',
-                      padding: '0.1rem 0.4rem',
-                      opacity: 0.7,
-                    }}
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
@@ -554,12 +590,31 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
             Enter
           </button>
         </form>
+
+        {/* Disembody button */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem', flexShrink: 0 }}>
+          <button
+            onClick={handleDisembody}
+            style={{
+              background: 'none',
+              border: '1px solid var(--border)',
+              color: 'var(--text-muted)',
+              borderRadius: '4px',
+              padding: '0.3rem 0.65rem',
+              fontSize: '0.78rem',
+              cursor: 'pointer',
+              opacity: 0.65,
+            }}
+          >
+            Disembody
+          </button>
+        </div>
       </div>
 
       {/* ── Right-side environment panel ──────────────────────────────── */}
       <div
         style={{
-          width: '200px',
+          width: '210px',
           flexShrink: 0,
           display: 'flex',
           flexDirection: 'column',
@@ -571,7 +626,25 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
           overflowY: 'auto',
         }}
       >
-        {/* Players in region */}
+        {/* ── World › Zone breadcrumb + embodied character ── */}
+        <div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.3rem', lineHeight: 1.4 }}>
+            <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{worldName}</span>
+            {zoneSlug && (
+              <>
+                <span style={{ opacity: 0.4 }}> › </span>
+                <span>{zoneSlug}</span>
+              </>
+            )}
+          </div>
+          {characterName && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 500 }}>
+              ◈ {characterName}
+            </div>
+          )}
+        </div>
+
+        {/* ── In this region: NPCs + players ── */}
         <div>
           <div
             style={{
@@ -585,32 +658,84 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
           >
             In this region
           </div>
-          {zonePlayers.length === 0 ? (
+
+          {/* Known NPCs — disposition colour dot + clickable name + relationship bar */}
+          {zoneNpcs.map((npc) => (
+            <div
+              key={npc.name}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.25rem' }}
+            >
+              <span
+                style={{
+                  color: DISPOSITION_COLORS[npc.disposition] ?? 'var(--text-muted)',
+                  fontSize: '0.6rem',
+                  flexShrink: 0,
+                }}
+              >
+                ■
+              </span>
+              {/* NPC Quick-Interact: click to pre-fill input */}
+              <button
+                onClick={() => setInput(`speak to ${npc.name}`)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  color: 'var(--warning)',
+                  fontWeight: 500,
+                  fontSize: '0.8rem',
+                  textAlign: 'left',
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {npc.name}
+              </button>
+              {/* NPC Relationship Indicator */}
+              {npc.relationshipScore !== undefined && (
+                <span
+                  title={`Relationship: ${npc.relationshipScore}`}
+                  style={{
+                    display: 'inline-block',
+                    width: '24px',
+                    height: '3px',
+                    borderRadius: '2px',
+                    flexShrink: 0,
+                    background: npc.relationshipScore > 0
+                      ? 'var(--success)'
+                      : npc.relationshipScore < 0
+                      ? 'var(--error)'
+                      : 'var(--border)',
+                    opacity: Math.min(1, 0.3 + Math.abs(npc.relationshipScore) / 100),
+                  }}
+                />
+              )}
+            </div>
+          ))}
+
+          {/* Active players */}
+          {zonePlayers.map((p) => (
+            <div
+              key={p.playerId}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.2rem' }}
+            >
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--success)', display: 'inline-block', flexShrink: 0 }} />
+              <span style={{ color: 'var(--success)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</span>
+            </div>
+          ))}
+
+          {zoneNpcs.length === 0 && zonePlayers.length === 0 && (
             <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', opacity: 0.5 }}>
               Only you
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-              {zonePlayers.map((p) => (
-                <div
-                  key={p.playerId}
-                  style={{
-                    color: 'var(--success)',
-                    fontWeight: 500,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.4rem',
-                  }}
-                >
-                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--success)', display: 'inline-block', flexShrink: 0 }} />
-                  {p.username}
-                </div>
-              ))}
             </div>
           )}
         </div>
 
-        {/* Zone atmosphere */}
+        {/* ── Zone atmosphere ── */}
         {atmosphereTags.length > 0 && (
           <div>
             <div
@@ -646,7 +771,74 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
           </div>
         )}
 
-        {/* Chat legend */}
+        {/* ── Mini Zone Map ── */}
+        {mapZones.length > 1 && (
+          <div>
+            <div
+              style={{
+                color: 'var(--text-muted)',
+                fontSize: '0.7rem',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                marginBottom: '0.5rem',
+                opacity: 0.6,
+              }}
+            >
+              Zones
+            </div>
+            <svg
+              width={160}
+              height={120}
+              style={{ display: 'block', overflow: 'visible' }}
+            >
+              {/* Edges */}
+              {mapLayout.edges.map((e, i) => {
+                const a = mapLayout.nodes.find(n => n.slug === e.from);
+                const b = mapLayout.nodes.find(n => n.slug === e.to);
+                if (!a || !b) return null;
+                return (
+                  <line
+                    key={i}
+                    x1={a.x} y1={a.y} x2={b.x} y2={b.y}
+                    stroke="var(--border)"
+                    strokeWidth={1}
+                  />
+                );
+              })}
+              {/* Nodes */}
+              {mapLayout.nodes.map((n) => (
+                <g
+                  key={n.slug}
+                  style={{ cursor: n.slug === zoneSlug ? 'default' : 'pointer' }}
+                  onClick={() => {
+                    if (n.slug !== zoneSlug) {
+                      socketRef.current?.emit('player:move', {
+                        sessionId: sessionId.current,
+                        targetZoneSlug: n.slug,
+                      });
+                    }
+                  }}
+                >
+                  <circle
+                    cx={n.x} cy={n.y} r={6}
+                    fill={n.slug === zoneSlug ? 'var(--accent)' : 'var(--bg)'}
+                    stroke={n.slug === zoneSlug ? 'var(--accent)' : 'var(--border)'}
+                    strokeWidth={1.5}
+                  />
+                  <text
+                    x={n.x} y={n.y + 15}
+                    textAnchor="middle"
+                    style={{ fontSize: '0.52rem', fill: 'var(--text-muted)', pointerEvents: 'none', userSelect: 'none' }}
+                  >
+                    {n.slug.length > 11 ? n.slug.slice(0, 10) + '…' : n.slug}
+                  </text>
+                </g>
+              ))}
+            </svg>
+          </div>
+        )}
+
+        {/* ── Legend ── */}
         <div>
           <div
             style={{

@@ -71,6 +71,15 @@ export interface FeatureInteraction {
   timestamp: Date;
 }
 
+// A traversal edge between two zones — records that a player moved from one to the other
+export interface VedaZoneEdge {
+  id: string;
+  worldId: string;
+  fromZoneSlug: string;
+  toZoneSlug: string;
+  createdAt: Date;
+}
+
 // Everything the Veda knows about a zone, used as AI generation context
 export interface ZoneContext {
   zone: VedaZone;

@@ -82,6 +82,7 @@ model World {
   characterTemplate  WorldCharacterTemplate?
   npcRelationships   NPCRelationship[]
   features           WorldFeature[]
+  zoneEdges          ZoneEdge[]
 
   @@map("worlds")
 }
@@ -237,6 +238,9 @@ model NPC {
   backstory           String?
   disposition         String   @default("neutral") // friendly, neutral, hostile, wary, etc.
   stats               Json     @default("{}")
+  memories            String[] // NPC's own event memories, last 20 entries
+  knownNpcIds         String[] // IDs of other NPCs this NPC has been co-present with
+  knownCharacterIds   String[] // IDs of player characters this NPC has met
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -409,4 +413,20 @@ model PlayerAction {
   session GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@map("player_actions")
+}
+
+// ── Zone Graph ─────────────────────────────────────────────────────────────────
+
+// Records a traversal edge between two zones (undirected — both directions are stored separately)
+model ZoneEdge {
+  id           String   @id @default(cuid())
+  worldId      String
+  fromZoneSlug String
+  toZoneSlug   String
+  createdAt    DateTime @default(now())
+
+  world World @relation(fields: [worldId], references: [id], onDelete: Cascade)
+
+  @@unique([worldId, fromZoneSlug, toZoneSlug])
+  @@map("zone_edges")
 }

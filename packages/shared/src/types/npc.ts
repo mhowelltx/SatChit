@@ -27,6 +27,9 @@ export interface NPC {
   backstory: string | null;
   disposition: NPCDisposition;
   stats: Record<string, unknown>;
+  memories: string[];          // NPC's own event memories, last 20 entries
+  knownNpcIds: string[];       // IDs of other NPCs this NPC has been co-present with
+  knownCharacterIds: string[]; // IDs of player characters this NPC has met
   createdAt: Date;
   updatedAt: Date;
 }
