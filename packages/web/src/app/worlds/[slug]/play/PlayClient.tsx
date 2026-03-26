@@ -133,8 +133,21 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
   // Session identity
   const [worldName, setWorldName] = useState<string>(worldSlug);
   const [characterName, setCharacterName] = useState<string | null>(null);
-  // Zone NPC list with disposition + relationship score
-  const [zoneNpcs, setZoneNpcs] = useState<Array<{ name: string; disposition: string; relationshipScore?: number }>>([]);
+  // Zone NPC list with full detail for environment panel
+  const [zoneNpcs, setZoneNpcs] = useState<Array<{
+    name: string;
+    disposition: string;
+    relationshipScore?: number;
+    physicalDescription?: string;
+    knownPlayer?: boolean;
+    traits?: string[];
+    backstory?: string;
+  }>>([]);
+  // NPC expand/collapse state
+  const [expandedNpcNames, setExpandedNpcNames] = useState<Set<string>>(new Set());
+  // Zone region description for collapsible panel section
+  const [zoneDescription, setZoneDescription] = useState<string | null>(null);
+  const [zoneDescExpanded, setZoneDescExpanded] = useState(false);
   // Mini zone map state
   const [mapZones, setMapZones] = useState<Array<{ slug: string; name: string }>>([]);
   const [mapEdges, setMapEdges] = useState<Array<{ from: string; to: string }>>([]);
@@ -182,6 +195,14 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     router.push('/worlds');
   }, [router]);
 
+  const toggleNpcExpand = useCallback((name: string) => {
+    setExpandedNpcNames(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? 'http://localhost:3001';
     const socket: AppSocket = io(wsUrl);
@@ -224,6 +245,10 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
       }
       if (payload.zoneNpcs) {
         setZoneNpcs(payload.zoneNpcs);
+      }
+      if (payload.zoneDescription) {
+        setZoneDescription(payload.zoneDescription);
+        setZoneDescExpanded(false);
       }
       setRecentZones((prev) => {
         const next = prev.filter((z) => z !== payload.zoneSlug);
@@ -592,7 +617,7 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
         </form>
 
         {/* Disembody button */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem', flexShrink: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: '0.5rem', flexShrink: 0 }}>
           <button
             onClick={handleDisembody}
             style={{
@@ -644,6 +669,46 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
           )}
         </div>
 
+        {/* ── Region Description (collapsible) ── */}
+        {zoneDescription && (
+          <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
+            <button
+              onClick={() => setZoneDescExpanded(v => !v)}
+              style={{
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                width: '100%',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                color: 'var(--text-muted)',
+                fontSize: '0.7rem',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                padding: '0 0 0.2rem',
+                opacity: 0.7,
+              }}
+            >
+              <span>Region Description</span>
+              <span>{zoneDescExpanded ? '▲' : '▼'}</span>
+            </button>
+            {zoneDescExpanded && (
+              <div
+                style={{
+                  fontSize: '0.78rem',
+                  color: 'var(--text)',
+                  lineHeight: 1.5,
+                  maxHeight: '140px',
+                  overflowY: 'auto',
+                }}
+              >
+                {zoneDescription}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── In this region: NPCs + players ── */}
         <div>
           <div
@@ -659,63 +724,115 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
             In this region
           </div>
 
-          {/* Known NPCs — disposition colour dot + clickable name + relationship bar */}
-          {zoneNpcs.map((npc) => (
-            <div
-              key={npc.name}
-              style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.25rem' }}
-            >
-              <span
-                style={{
-                  color: DISPOSITION_COLORS[npc.disposition] ?? 'var(--text-muted)',
-                  fontSize: '0.6rem',
-                  flexShrink: 0,
-                }}
-              >
-                ■
-              </span>
-              {/* NPC Quick-Interact: click to pre-fill input */}
-              <button
-                onClick={() => setInput(`speak to ${npc.name}`)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  padding: 0,
-                  cursor: 'pointer',
-                  color: 'var(--warning)',
-                  fontWeight: 500,
-                  fontSize: '0.8rem',
-                  textAlign: 'left',
-                  flex: 1,
-                  minWidth: 0,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {npc.name}
-              </button>
-              {/* NPC Relationship Indicator */}
-              {npc.relationshipScore !== undefined && (
-                <span
-                  title={`Relationship: ${npc.relationshipScore}`}
-                  style={{
-                    display: 'inline-block',
-                    width: '24px',
-                    height: '3px',
-                    borderRadius: '2px',
-                    flexShrink: 0,
-                    background: npc.relationshipScore > 0
-                      ? 'var(--success)'
-                      : npc.relationshipScore < 0
-                      ? 'var(--error)'
-                      : 'var(--border)',
-                    opacity: Math.min(1, 0.3 + Math.abs(npc.relationshipScore) / 100),
-                  }}
-                />
-              )}
-            </div>
-          ))}
+          {/* Known NPCs — disposition colour dot + clickable name + expand/collapse */}
+          {zoneNpcs.map((npc) => {
+            const isExpanded = expandedNpcNames.has(npc.name);
+            return (
+              <div key={npc.name} style={{ marginBottom: '0.3rem' }}>
+                {/* Header row */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <span
+                    style={{
+                      color: DISPOSITION_COLORS[npc.disposition] ?? 'var(--text-muted)',
+                      fontSize: '0.6rem',
+                      flexShrink: 0,
+                    }}
+                  >
+                    ■
+                  </span>
+                  {/* NPC Quick-Interact: click to pre-fill input */}
+                  <button
+                    onClick={() => setInput(`speak to ${npc.name}`)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      cursor: 'pointer',
+                      color: 'var(--warning)',
+                      fontWeight: 500,
+                      fontSize: '0.8rem',
+                      textAlign: 'left',
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {npc.name}
+                  </button>
+                  {/* Expand/collapse toggle */}
+                  <button
+                    onClick={() => toggleNpcExpand(npc.name)}
+                    title={isExpanded ? 'Collapse' : 'Expand'}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: 'var(--text-muted)',
+                      fontSize: '0.6rem',
+                      padding: '0 2px',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {isExpanded ? '▲' : '▼'}
+                  </button>
+                  {/* NPC Relationship Indicator */}
+                  {npc.relationshipScore !== undefined && (
+                    <span
+                      title={`Relationship: ${npc.relationshipScore}`}
+                      style={{
+                        display: 'inline-block',
+                        width: '24px',
+                        height: '3px',
+                        borderRadius: '2px',
+                        flexShrink: 0,
+                        background: npc.relationshipScore > 0
+                          ? 'var(--success)'
+                          : npc.relationshipScore < 0
+                          ? 'var(--error)'
+                          : 'var(--border)',
+                        opacity: Math.min(1, 0.3 + Math.abs(npc.relationshipScore) / 100),
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* Expanded detail — knowledge-gated */}
+                {isExpanded && (
+                  <div
+                    style={{
+                      marginLeft: '1rem',
+                      fontSize: '0.72rem',
+                      color: 'var(--text-muted)',
+                      borderLeft: '1px solid var(--border)',
+                      paddingLeft: '0.5rem',
+                      marginTop: '0.2rem',
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {npc.physicalDescription && (
+                      <div style={{ marginBottom: '0.2rem' }}>{npc.physicalDescription}</div>
+                    )}
+                    {npc.knownPlayer && npc.traits && npc.traits.length > 0 && (
+                      <div style={{ marginBottom: '0.2rem' }}>
+                        <span style={{ opacity: 0.6 }}>Traits: </span>
+                        {npc.traits.join(', ')}
+                      </div>
+                    )}
+                    {npc.knownPlayer && npc.backstory && (
+                      <div style={{ fontStyle: 'italic', opacity: 0.75 }}>
+                        {npc.backstory.slice(0, 120)}{npc.backstory.length > 120 ? '…' : ''}
+                      </div>
+                    )}
+                    {!npc.knownPlayer && (
+                      <div style={{ opacity: 0.45, fontStyle: 'italic' }}>Unknown to you</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
           {/* Active players */}
           {zonePlayers.map((p) => (

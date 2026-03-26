@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import type { PrismaClient } from '@prisma/client';
+import { requireRishi } from './admin.js';
 
 export function createNPCsRouter(prisma: PrismaClient): Router {
   const router = Router();
+  const rishi = requireRishi(prisma);
 
-  // List all NPCs in a world
+  // List all NPCs in a world — Rishi only
   // GET /api/worlds/:slug/npcs
-  router.get('/:slug/npcs', async (req, res) => {
+  router.get('/:slug/npcs', rishi, async (req, res) => {
     try {
       const world = await prisma.world.findUnique({ where: { slug: req.params.slug } });
       if (!world) return res.status(404).json({ error: 'World not found.' });
@@ -25,8 +27,8 @@ export function createNPCsRouter(prisma: PrismaClient): Router {
     }
   });
 
-  // Get a single NPC
-  router.get('/npcs/:id', async (req, res) => {
+  // Get a single NPC — Rishi only
+  router.get('/npcs/:id', rishi, async (req, res) => {
     try {
       const npc = await prisma.nPC.findUnique({
         where: { id: req.params.id },
@@ -40,6 +42,42 @@ export function createNPCsRouter(prisma: PrismaClient): Router {
       res.json({ npc });
     } catch (err) {
       res.status(500).json({ error: 'Failed to fetch NPC.' });
+    }
+  });
+
+  // Update an NPC — Rishi only
+  // PATCH /api/worlds/:slug/npcs/:id
+  router.patch('/:slug/npcs/:id', rishi, async (req, res) => {
+    try {
+      const { name, physicalDescription, traits, disposition, backstory, skills, abilities, memories } =
+        req.body as {
+          name?: string;
+          physicalDescription?: string;
+          traits?: string[];
+          disposition?: string;
+          backstory?: string;
+          skills?: Record<string, number>;
+          abilities?: string[];
+          memories?: string[];
+        };
+
+      const npc = await prisma.nPC.update({
+        where: { id: req.params.id },
+        data: {
+          ...(name !== undefined && { name }),
+          ...(physicalDescription !== undefined && { physicalDescription }),
+          ...(traits !== undefined && { traits }),
+          ...(disposition !== undefined && { disposition }),
+          ...(backstory !== undefined && { backstory }),
+          ...(skills !== undefined && { skills: skills as object }),
+          ...(abilities !== undefined && { abilities }),
+          ...(memories !== undefined && { memories }),
+        },
+      });
+      res.json({ npc });
+    } catch (err: any) {
+      if (err?.code === 'P2025') return res.status(404).json({ error: 'NPC not found.' });
+      res.status(500).json({ error: 'Failed to update NPC.' });
     }
   });
 

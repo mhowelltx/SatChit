@@ -46,7 +46,17 @@ export interface NarrationPayload {
   /** Atmosphere/mood tags for the current zone */
   atmosphereTags?: string[];
   /** Known NPCs currently in this zone, for the environment panel */
-  zoneNpcs?: Array<{ name: string; disposition: string; relationshipScore?: number }>;
+  zoneNpcs?: Array<{
+    name: string;
+    disposition: string;
+    relationshipScore?: number;
+    physicalDescription?: string;
+    knownPlayer?: boolean;
+    traits?: string[];
+    backstory?: string;
+  }>;
+  /** Full rawContent description of the current/destination zone on zone entry/transition */
+  zoneDescription?: string;
 }
 
 /** Sent once after session:join with world/character identity and the full discovered zone graph */
