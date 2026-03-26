@@ -331,13 +331,14 @@ export class WorldGeneratorService {
       const transitionResult = await ai.generateStructured(
         `Does this narration clearly describe the character ARRIVING at or ENTERING a distinctly new named location — not just moving within the current area?
          Current zone: "${zone!.name}"
-         If yes, provide a short location name (2-5 words). If no, return null.
+         If yes, provide the destination location name (2-5 words) as newZoneName.
+         If no transition occurred, leave newZoneName as an empty string.
          Narration: "${narration}"`,
         { world: context.world },
-        { newZoneName: null as string | null },
+        { newZoneName: '' },
       );
       const candidateName = transitionResult?.newZoneName;
-      if (candidateName && typeof candidateName === 'string') {
+      if (candidateName && typeof candidateName === 'string' && candidateName.trim() !== '') {
         // @ts-ignore: slugify CJS/ESM interop issue with NodeNext
         const candidateSlug = slugify(candidateName, { lower: true, strict: true });
         if (candidateSlug && candidateSlug !== zone!.slug) {
@@ -474,26 +475,26 @@ export class WorldGeneratorService {
   ): Promise<WorldFeature | null> {
     try {
       const featureShape = {
-        feature: null as {
-          name: string;
-          featureType: string;
-          description: string;
-        } | null,
+        featureCreated: false,
+        name: 'name of the feature',
+        featureType: 'MONUMENT',
+        description: 'brief description of the feature',
       };
 
       const extracted = await ai.generateStructured(
         `Did the player BUILD, CONSTRUCT, ERECT, CARVE, or CREATE a permanent physical feature in this narration?
-         Only include it if the player's action directly resulted in creating something new and tangible that would persist in the world (e.g. a monument, altar, cairn, building, marker, shrine, structure).
+         Only set featureCreated to true if the player's action directly resulted in creating something new and tangible that would persist in the world (e.g. a monument, altar, cairn, building, marker, shrine, structure, throne).
          Do NOT include pre-existing things the player merely discovered or interacted with.
-         If yes, return the feature details. If no, return null.
+         If yes, set featureCreated: true and fill in name, featureType, and description.
+         If no, set featureCreated: false.
          Valid featureType values: MONUMENT, BUILDING, ALTAR, STRUCTURE, MARKER, OTHER
          Narration: "${narration}"`,
         { world: { name: world.name, foundationalLaws: world.foundationalLaws ?? [], culturalTypologies: world.culturalTypologies ?? [] } },
         featureShape,
       );
 
-      const featureData = extracted?.feature;
-      if (!featureData?.name) return null;
+      if (!extracted?.featureCreated || !extracted.name) return null;
+      const featureData = extracted;
 
       // Avoid duplicates
       const existing = await this.worldFeatureService.findByName(world.id, featureData.name);
