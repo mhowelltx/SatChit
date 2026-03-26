@@ -6,6 +6,7 @@ import type {
   SessionJoinPayload,
   PlayerActionPayload,
   PlayerMovePayload,
+  ZoneChatInputPayload,
   NameMention,
 } from '@satchit/shared';
 import type { IAIProvider } from '../ai/index.js';
@@ -27,6 +28,36 @@ type AppServer = Server<ClientToServerEvents, ServerToClientEvents>;
 
 function zoneRoom(worldId: string, zoneSlug: string): string {
   return `world:${worldId}:zone:${zoneSlug}`;
+}
+
+// ── Zone player registry ───────────────────────────────────────────────────────
+// Shared across all socket connections — tracks who is in each zone room.
+// Keyed by zoneRoom string; inner map keyed by socket.id so multiple tabs work.
+
+interface ZonePlayer { playerId: string; username: string; }
+const zoneRegistry = new Map<string, Map<string, ZonePlayer>>();
+
+function regAdd(room: string, socketId: string, info: ZonePlayer) {
+  if (!zoneRegistry.has(room)) zoneRegistry.set(room, new Map());
+  zoneRegistry.get(room)!.set(socketId, info);
+}
+
+function regRemove(room: string, socketId: string) {
+  const m = zoneRegistry.get(room);
+  if (!m) return;
+  m.delete(socketId);
+  if (m.size === 0) zoneRegistry.delete(room);
+}
+
+function regPlayers(room: string): ZonePlayer[] {
+  return Array.from(zoneRegistry.get(room)?.values() ?? []);
+}
+
+function regPurgeSocket(socketId: string) {
+  for (const [room, m] of zoneRegistry) {
+    m.delete(socketId);
+    if (m.size === 0) zoneRegistry.delete(room);
+  }
 }
 
 export function registerSocketHandlers(
@@ -60,6 +91,8 @@ export function registerSocketHandlers(
     let rishiName: string | null = null;
     /** Resolved player ID once session is joined */
     let resolvedPlayerId: string | null = null;
+    /** Cached username to avoid repeated DB queries */
+    let cachedUsername: string | null = null;
 
     socket.on('session:join', async (payload: SessionJoinPayload) => {
       try {
@@ -95,6 +128,10 @@ export function registerSocketHandlers(
         activeSessionId = session.id;
         activeWorldId = world.id;
 
+        // Cache username once
+        const user = await prisma.user.findUnique({ where: { id: resolvedPlayerId } });
+        cachedUsername = user?.username ?? 'Unknown';
+
         // Resolve start zone
         const zones = await vedaService.listZones(world.id);
         const startZone = targetZoneSlug
@@ -104,8 +141,19 @@ export function registerSocketHandlers(
         if (startZone) {
           activeZoneSlug = startZone.slug;
           await sessionService.updateZone(session.id, startZone.id);
-          socket.join(zoneRoom(world.id, startZone.slug));
+
+          const room = zoneRoom(world.id, startZone.slug);
+          socket.join(room);
           _trackRecentZone(startZone.slug);
+
+          // Send presence snapshot to joining player (who was already here)
+          const others = regPlayers(room).filter(p => p.playerId !== resolvedPlayerId);
+          if (others.length > 0) {
+            socket.emit('zone:presence', { zoneSlug: startZone.slug, players: others });
+          }
+
+          // Register self after reading others
+          regAdd(room, socket.id, { playerId: resolvedPlayerId, username: cachedUsername });
 
           socket.emit('world:narration', {
             text: startZone.rawContent,
@@ -116,10 +164,9 @@ export function registerSocketHandlers(
           });
 
           // Notify others in zone
-          const user = await prisma.user.findUnique({ where: { id: resolvedPlayerId } });
-          socket.to(zoneRoom(world.id, startZone.slug)).emit('player:joined', {
+          socket.to(room).emit('player:joined', {
             playerId: resolvedPlayerId,
-            username: user?.username ?? 'Unknown',
+            username: cachedUsername,
             zoneSlug: startZone.slug,
           });
         }
@@ -147,6 +194,15 @@ export function registerSocketHandlers(
 
         const world = await prisma.world.findUnique({ where: { id: activeWorldId } });
         if (!world) return;
+
+        // Echo the action to zone-mates immediately (before AI responds)
+        socket.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('player:action:echo', {
+          playerId: resolvedPlayerId ?? session.playerId,
+          username: cachedUsername ?? 'Unknown',
+          input: payload.input,
+          zoneSlug: activeZoneSlug,
+          timestamp: new Date().toISOString(),
+        });
 
         // Capture prior count BEFORE incrementing (so first message = 0)
         const priorZoneCount = zoneMessageCounts.get(activeZoneSlug) ?? 0;
@@ -194,12 +250,14 @@ export function registerSocketHandlers(
         if (result.nextZone && result.nextZone.slug !== activeZoneSlug) {
           const fromSlug = activeZoneSlug;
           const toSlug = result.nextZone.slug;
-          const user = await prisma.user.findUnique({ where: { id: resolvedPlayerId ?? session.playerId } });
+          const pid = resolvedPlayerId ?? session.playerId;
+          const uname = cachedUsername ?? 'Unknown';
 
+          regRemove(zoneRoom(activeWorldId, fromSlug!), socket.id);
           socket.leave(zoneRoom(activeWorldId, fromSlug!));
           socket.to(zoneRoom(activeWorldId, fromSlug!)).emit('player:moved', {
-            playerId: resolvedPlayerId ?? session.playerId,
-            username: user?.username ?? 'Unknown',
+            playerId: pid,
+            username: uname,
             fromZoneSlug: fromSlug,
             toZoneSlug: toSlug,
           });
@@ -208,11 +266,18 @@ export function registerSocketHandlers(
           activeZoneSlug = toSlug;
           _trackRecentZone(toSlug);
 
+          const newRoom = zoneRoom(activeWorldId, toSlug);
+          const newRoomOthers = regPlayers(newRoom).filter(p => p.playerId !== pid);
+          if (newRoomOthers.length > 0) {
+            socket.emit('zone:presence', { zoneSlug: toSlug, players: newRoomOthers });
+          }
+          regAdd(newRoom, socket.id, { playerId: pid, username: uname });
+
           await sessionService.updateZone(activeSessionId, result.nextZone.id);
 
           socket.to(zoneRoom(activeWorldId, toSlug)).emit('player:joined', {
-            playerId: resolvedPlayerId ?? session.playerId,
-            username: user?.username ?? 'Unknown',
+            playerId: pid,
+            username: uname,
             zoneSlug: toSlug,
           });
 
@@ -273,6 +338,28 @@ export function registerSocketHandlers(
       }
     });
 
+    socket.on('zone:chat', async (payload: ZoneChatInputPayload) => {
+      if (!activeSessionId || !activeWorldId || !activeZoneSlug) return;
+      const message = payload.message?.trim();
+      if (!message) return;
+
+      try {
+        const session = await sessionService.findById(payload.sessionId);
+        if (!session || session.id !== activeSessionId) return;
+
+        // Broadcast to everyone in zone including sender (io.to, not socket.to)
+        io.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('zone:chat', {
+          playerId: resolvedPlayerId ?? session.playerId,
+          username: cachedUsername ?? 'Unknown',
+          message,
+          zoneSlug: activeZoneSlug,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('zone:chat error', err);
+      }
+    });
+
     socket.on('player:move', async (payload: PlayerMovePayload) => {
       if (!activeSessionId || !activeWorldId) {
         socket.emit('session:error', { code: 'NO_SESSION', message: 'No active session.' });
@@ -289,23 +376,33 @@ export function registerSocketHandlers(
         // @ts-ignore: slugify CJS/ESM interop issue with NodeNext
         const targetSlug = slugify(payload.targetZoneSlug, { lower: true, strict: true });
         const fromSlug = activeZoneSlug;
-        const user = await prisma.user.findUnique({ where: { id: session.playerId } });
+        const pid = resolvedPlayerId ?? session.playerId;
+        const uname = cachedUsername ?? 'Unknown';
 
         // Leave current zone room
         if (fromSlug) {
+          regRemove(zoneRoom(activeWorldId, fromSlug), socket.id);
           socket.leave(zoneRoom(activeWorldId, fromSlug));
           socket.to(zoneRoom(activeWorldId, fromSlug)).emit('player:moved', {
-            playerId: session.playerId,
-            username: user?.username ?? 'Unknown',
+            playerId: pid,
+            username: uname,
             fromZoneSlug: fromSlug,
             toZoneSlug: targetSlug,
           });
         }
 
         // Join new zone room
-        socket.join(zoneRoom(activeWorldId, targetSlug));
+        const newRoom = zoneRoom(activeWorldId, targetSlug);
+        socket.join(newRoom);
         activeZoneSlug = targetSlug;
         _trackRecentZone(targetSlug);
+
+        // Send presence to the moving player, then register
+        const newRoomOthers = regPlayers(newRoom).filter(p => p.playerId !== pid);
+        if (newRoomOthers.length > 0) {
+          socket.emit('zone:presence', { zoneSlug: targetSlug, players: newRoomOthers });
+        }
+        regAdd(newRoom, socket.id, { playerId: pid, username: uname });
 
         // Check if zone exists in Veda or generate it
         let zone = await vedaService.getZone(activeWorldId, targetSlug);
@@ -327,7 +424,7 @@ export function registerSocketHandlers(
             },
             targetSlug,
             'enter',
-            resolvedPlayerId ?? session.playerId,
+            pid,
             activeCharacterId ? await prisma.character.findUnique({ where: { id: activeCharacterId } }) as any : null,
             0, // first visit to this zone
             sessionActionCount,
@@ -352,9 +449,9 @@ export function registerSocketHandlers(
         });
 
         // Notify others in new zone
-        socket.to(zoneRoom(activeWorldId, targetSlug)).emit('player:joined', {
-          playerId: session.playerId,
-          username: user?.username ?? 'Unknown',
+        socket.to(newRoom).emit('player:joined', {
+          playerId: pid,
+          username: uname,
           zoneSlug: targetSlug,
         });
       } catch (err) {
@@ -367,6 +464,16 @@ export function registerSocketHandlers(
     });
 
     socket.on('disconnect', async () => {
+      regPurgeSocket(socket.id);
+
+      // Notify zone-mates that this player left
+      if (activeWorldId && activeZoneSlug && resolvedPlayerId) {
+        socket.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('player:left', {
+          playerId: resolvedPlayerId,
+          username: cachedUsername ?? 'Unknown',
+        });
+      }
+
       if (activeSessionId) {
         await sessionService.end(activeSessionId).catch(console.error);
       }

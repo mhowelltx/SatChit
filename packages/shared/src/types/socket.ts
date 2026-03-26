@@ -20,6 +20,12 @@ export interface PlayerMovePayload {
   targetZoneSlug: string;
 }
 
+export interface ZoneChatInputPayload {
+  sessionId: string;
+  /** Direct speech message (leading " already stripped by client) */
+  message: string;
+}
+
 // ── Server → Client ──────────────────────────────────────────────────────────
 
 /** Identifies a named entity in narration text for colour-coding in the client */
@@ -71,6 +77,30 @@ export interface ErrorPayload {
   message: string;
 }
 
+/** Snapshot of players currently in a zone — sent to a socket on zone entry */
+export interface ZonePresencePayload {
+  zoneSlug: string;
+  players: Array<{ playerId: string; username: string }>;
+}
+
+/** Broadcast to zone-mates when a player submits an action (before AI narration arrives) */
+export interface PlayerActionEchoPayload {
+  playerId: string;
+  username: string;
+  input: string;
+  zoneSlug: string;
+  timestamp: string;
+}
+
+/** Direct zone chat message — no AI involved */
+export interface ZoneChatPayload {
+  playerId: string;
+  username: string;
+  message: string;
+  zoneSlug: string;
+  timestamp: string;
+}
+
 // ── Typed event maps (for socket.io generics) ─────────────────────────────────
 
 export interface ServerToClientEvents {
@@ -80,10 +110,14 @@ export interface ServerToClientEvents {
   'player:left': (payload: PlayerLeftPayload) => void;
   'veda:update': (payload: VedaUpdatePayload) => void;
   'session:error': (payload: ErrorPayload) => void;
+  'zone:presence': (payload: ZonePresencePayload) => void;
+  'player:action:echo': (payload: PlayerActionEchoPayload) => void;
+  'zone:chat': (payload: ZoneChatPayload) => void;
 }
 
 export interface ClientToServerEvents {
   'session:join': (payload: SessionJoinPayload) => void;
   'player:action': (payload: PlayerActionPayload) => void;
   'player:move': (payload: PlayerMovePayload) => void;
+  'zone:chat': (payload: ZoneChatInputPayload) => void;
 }
