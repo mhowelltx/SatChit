@@ -317,6 +317,51 @@ export default function VedaEditPage() {
     }
   }, [apiUrl, slug, userId]);
 
+  const deleteZone = useCallback(async (zoneSlug: string) => {
+    if (!confirm('Delete this zone? This cannot be undone.')) return;
+    await fetch(`${apiUrl}/api/worlds/${slug}/veda/zones/${zoneSlug}`, {
+      method: 'DELETE',
+      headers: { 'x-rishi-id': userId! },
+    });
+    setVeda(prev => prev ? { ...prev, zones: prev.zones.filter(z => z.slug !== zoneSlug) } : prev);
+  }, [apiUrl, slug, userId]);
+
+  const deleteEntity = useCallback(async (entityId: string) => {
+    if (!confirm('Delete this entity? This cannot be undone.')) return;
+    await fetch(`${apiUrl}/api/worlds/${slug}/veda/entities/${entityId}`, {
+      method: 'DELETE',
+      headers: { 'x-rishi-id': userId! },
+    });
+    setVeda(prev => prev ? { ...prev, entities: prev.entities.filter(e => e.id !== entityId) } : prev);
+  }, [apiUrl, slug, userId]);
+
+  const deleteLore = useCallback(async (loreId: string) => {
+    if (!confirm('Delete this lore entry? This cannot be undone.')) return;
+    await fetch(`${apiUrl}/api/worlds/${slug}/veda/lore/${loreId}`, {
+      method: 'DELETE',
+      headers: { 'x-rishi-id': userId! },
+    });
+    setVeda(prev => prev ? { ...prev, lore: prev.lore.filter(l => l.id !== loreId) } : prev);
+  }, [apiUrl, slug, userId]);
+
+  const deleteEvent = useCallback(async (eventId: string) => {
+    if (!confirm('Delete this event? This cannot be undone.')) return;
+    await fetch(`${apiUrl}/api/worlds/${slug}/veda/events/${eventId}`, {
+      method: 'DELETE',
+      headers: { 'x-rishi-id': userId! },
+    });
+    setVeda(prev => prev ? { ...prev, recentEvents: prev.recentEvents.filter(e => e.id !== eventId) } : prev);
+  }, [apiUrl, slug, userId]);
+
+  const deleteNPC = useCallback(async (npcId: string) => {
+    if (!confirm('Delete this NPC? This cannot be undone.')) return;
+    await fetch(`${apiUrl}/api/worlds/${slug}/npcs/${npcId}`, {
+      method: 'DELETE',
+      headers: { 'x-rishi-id': userId! },
+    });
+    setNpcs(prev => prev.filter(n => n.id !== npcId));
+  }, [apiUrl, slug, userId]);
+
   const sectionLabel: React.CSSProperties = {
     color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase',
     letterSpacing: '0.12em', margin: '0 0 0.75rem',
@@ -389,7 +434,10 @@ export default function VedaEditPage() {
         <h3 style={sectionLabel}>Zones ({zones.length})</h3>
         {zones.map((z) => (
           <div key={z.id} style={card}>
-            <div style={{ color: 'var(--accent)', fontWeight: 'bold', marginBottom: '0.5rem' }}>{z.name} <span style={{ color: 'var(--text-muted)', fontWeight: 'normal', fontSize: '0.8rem' }}>({z.slug})</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.5rem' }}>
+              <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>{z.name} <span style={{ color: 'var(--text-muted)', fontWeight: 'normal', fontSize: '0.8rem' }}>({z.slug})</span></span>
+              <button onClick={() => deleteZone(z.slug)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error)', fontSize: '0.75rem', padding: '0 4px' }}>Delete</button>
+            </div>
             <div style={fieldLabel}>Name</div>
             <div style={fieldRow}>
               <EditableText value={z.name} onSave={v => patchZone(z.slug, 'name', v)} />
@@ -417,9 +465,12 @@ export default function VedaEditPage() {
         <h3 style={sectionLabel}>NPCs ({npcs.length})</h3>
         {npcs.map((n) => (
           <div key={n.id} style={card}>
-            <div style={{ color: 'var(--accent)', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-              {n.name}
-              {n.currentZone && <span style={{ color: 'var(--text-muted)', fontWeight: 'normal', fontSize: '0.8rem' }}> · {n.currentZone.name}</span>}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.5rem' }}>
+              <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>
+                {n.name}
+                {n.currentZone && <span style={{ color: 'var(--text-muted)', fontWeight: 'normal', fontSize: '0.8rem' }}> · {n.currentZone.name}</span>}
+              </span>
+              <button onClick={() => deleteNPC(n.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error)', fontSize: '0.75rem', padding: '0 4px' }}>Delete</button>
             </div>
             <div style={fieldLabel}>Name</div>
             <div style={fieldRow}>
@@ -450,7 +501,10 @@ export default function VedaEditPage() {
         <h3 style={sectionLabel}>Entities ({entities.length})</h3>
         {entities.map((e) => (
           <div key={e.id} style={card}>
-            <div style={{ color: 'var(--accent)', fontWeight: 'bold', marginBottom: '0.5rem' }}>{e.name}</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.5rem' }}>
+              <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>{e.name}</span>
+              <button onClick={() => deleteEntity(e.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error)', fontSize: '0.75rem', padding: '0 4px' }}>Delete</button>
+            </div>
             <div style={fieldLabel}>Name</div>
             <div style={fieldRow}>
               <EditableText value={e.name} onSave={v => patchEntity(e.id, 'name', v)} />
@@ -473,7 +527,10 @@ export default function VedaEditPage() {
         <h3 style={sectionLabel}>Lore ({lore.length})</h3>
         {lore.map((l) => (
           <div key={l.id} style={card}>
-            <div style={{ color: 'var(--accent)', fontWeight: 'bold', marginBottom: '0.5rem' }}>{l.title}</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.5rem' }}>
+              <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>{l.title}</span>
+              <button onClick={() => deleteLore(l.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error)', fontSize: '0.75rem', padding: '0 4px' }}>Delete</button>
+            </div>
             <div style={fieldLabel}>Title</div>
             <div style={fieldRow}>
               <EditableText value={l.title} onSave={v => patchLore(l.id, 'title', v)} />
@@ -496,6 +553,9 @@ export default function VedaEditPage() {
         <h3 style={sectionLabel}>Recent Events ({recentEvents.length})</h3>
         {recentEvents.map((ev) => (
           <div key={ev.id} style={card}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.3rem' }}>
+              <button onClick={() => deleteEvent(ev.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error)', fontSize: '0.75rem', padding: '0 4px' }}>Delete</button>
+            </div>
             <div style={fieldLabel}>Description</div>
             <div style={fieldRow}>
               <EditableText value={ev.description} onSave={v => patchEvent(ev.id, 'description', v)} multiline />

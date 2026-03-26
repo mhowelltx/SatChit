@@ -152,8 +152,22 @@ export class WorldGeneratorService {
     let zone = await this.vedaService.getZone(world.id, currentZoneSlug);
     const isNewZone = !zone;
 
-    const worldLore = await this.vedaService.listLore(world.id);
-    const nearbyZones = await this.vedaService.listZones(world.id);
+    // Limit lore to 10 most recent entries to keep in-memory context size manageable
+    const worldLore = (await this.vedaService.listLore(world.id)).slice(0, 10);
+    // Limit nearbyZones to edge-connected zones only, strip rawContent to reduce context size
+    const allZones = await this.vedaService.listZones(world.id);
+    const zoneEdges = await this.vedaService.listZoneEdges(world.id);
+    const connectedSlugs = new Set(
+      zoneEdges
+        .filter(e => e.fromZoneSlug === currentZoneSlug || e.toZoneSlug === currentZoneSlug)
+        .flatMap(e => [e.fromZoneSlug, e.toZoneSlug])
+        .filter(s => s !== currentZoneSlug),
+    );
+    // Strip rawContent from nearby zones to reduce in-memory context size (prompt builder only uses zone name)
+    const nearbyZones = allZones
+      .filter(z => connectedSlugs.has(z.slug))
+      .slice(0, 8)
+      .map(z => ({ ...z, rawContent: '' }));
     const npcsInZone = zone ? await this.npcService.listByZone(zone.id) : [];
     const featuresInZone = zone ? await this.worldFeatureService.findByZone(zone.id) : [];
 
@@ -226,7 +240,7 @@ export class WorldGeneratorService {
         culturalTypologies: world.culturalTypologies,
       },
       character: characterContext,
-      currentZone: zone ?? undefined,
+      currentZone: zone ? { ...zone, rawContent: zone.rawContent?.slice(0, 500) ?? '' } : undefined,
       nearbyZones,
       worldLore,
       npcsPresent: npcsInZone.map((n) => ({
@@ -350,7 +364,7 @@ export class WorldGeneratorService {
     );
 
     // Best-effort: update NPC relationships based on interaction
-    await this.updateNPCRelationships(world, zone!, npcsInZone, narration, playerId, ai);
+    await this.updateNPCRelationships(world, zone!, npcsInZone, narration, playerId, character?.name ?? null, ai);
 
     // Best-effort: update NPC social graph (who knows whom)
     await this.updateNPCSocialGraph(npcsInZone, activeCharacterId(character));
@@ -641,11 +655,13 @@ export class WorldGeneratorService {
     npcsInZone: Awaited<ReturnType<NPCService['listByZone']>>,
     narration: string,
     playerId: string,
+    characterName: string | null,
     ai: IAIProvider,
   ): Promise<void> {
     if (npcsInZone.length === 0) return;
     try {
       const npcNames = npcsInZone.map((n) => n.name);
+      const characterLabel = characterName ?? 'the player character';
       const relShape = {
         interactions: [
           { npcName: 'NPC name', delta: 0, note: 'one-sentence context' },
@@ -653,8 +669,9 @@ export class WorldGeneratorService {
       };
 
       const result = await ai.generateStructured(
-        `Based on this narration, did the player's interaction change their relationship with any of these NPCs: ${npcNames.join(', ')}?
+        `Based on this narration, did ${characterLabel}'s interaction change their relationship with any of these NPCs: ${npcNames.join(', ')}?
          For each NPC actually interacted with, provide a delta (-10 to +10) and a one-sentence note.
+         In the note, refer to ${characterLabel} by name (not with pronouns like "she", "he", "you", or "the player"), and refer to each NPC by their name.
          Only include NPCs with meaningful interactions. Return an empty array if none.
          Narration: "${narration}"`,
         { world: { name: world.name, foundationalLaws: world.foundationalLaws ?? [], culturalTypologies: world.culturalTypologies ?? [] } },

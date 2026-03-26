@@ -275,5 +275,55 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
     }
   });
 
+  // ── Veda Delete Endpoints (Rishi only) ───────────────────────────────────────
+
+  // Delete a zone
+  router.delete('/:slug/veda/zones/:zoneSlug', rishi, async (req, res) => {
+    try {
+      const world = await prisma.world.findUnique({ where: { slug: String(req.params['slug']) } });
+      if (!world) return res.status(404).json({ error: 'World not found.' });
+      await prisma.vedaZone.delete({
+        where: { worldId_slug: { worldId: world.id, slug: String(req.params['zoneSlug']) } },
+      });
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err?.code === 'P2025') return res.status(404).json({ error: 'Zone not found.' });
+      res.status(500).json({ error: 'Failed to delete zone.' });
+    }
+  });
+
+  // Delete a Veda entity
+  router.delete('/:slug/veda/entities/:entityId', rishi, async (req, res) => {
+    try {
+      await prisma.vedaEntity.delete({ where: { id: String(req.params['entityId']) } });
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err?.code === 'P2025') return res.status(404).json({ error: 'Entity not found.' });
+      res.status(500).json({ error: 'Failed to delete entity.' });
+    }
+  });
+
+  // Delete a Veda lore entry
+  router.delete('/:slug/veda/lore/:loreId', rishi, async (req, res) => {
+    try {
+      await prisma.vedaLore.delete({ where: { id: String(req.params['loreId']) } });
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err?.code === 'P2025') return res.status(404).json({ error: 'Lore not found.' });
+      res.status(500).json({ error: 'Failed to delete lore.' });
+    }
+  });
+
+  // Delete a Veda event
+  router.delete('/:slug/veda/events/:eventId', rishi, async (req, res) => {
+    try {
+      await prisma.vedaEvent.delete({ where: { id: String(req.params['eventId']) } });
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err?.code === 'P2025') return res.status(404).json({ error: 'Event not found.' });
+      res.status(500).json({ error: 'Failed to delete event.' });
+    }
+  });
+
   return router;
 }

@@ -46,6 +46,18 @@ export function createNPCsRouter(prisma: PrismaClient): Router {
     }
   });
 
+  // Delete an NPC — Rishi only
+  // DELETE /api/worlds/:slug/npcs/:id
+  router.delete('/:slug/npcs/:id', rishi, async (req, res) => {
+    try {
+      await prisma.nPC.delete({ where: { id: String(req.params['id']) } });
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err?.code === 'P2025') return res.status(404).json({ error: 'NPC not found.' });
+      res.status(500).json({ error: 'Failed to delete NPC.' });
+    }
+  });
+
   // Update an NPC — Rishi only
   // PATCH /api/worlds/:slug/npcs/:id
   router.patch('/:slug/npcs/:id', rishi, async (req, res) => {

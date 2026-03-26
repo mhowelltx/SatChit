@@ -70,6 +70,7 @@ export interface SessionInfoPayload {
 export interface PlayerMovedPayload {
   playerId: string;
   username: string;
+  characterName?: string | null;
   fromZoneSlug: string | null;
   toZoneSlug: string;
 }
@@ -77,6 +78,7 @@ export interface PlayerMovedPayload {
 export interface PlayerJoinedPayload {
   playerId: string;
   username: string;
+  characterName?: string | null;
   zoneSlug: string;
 }
 
@@ -100,7 +102,7 @@ export interface ErrorPayload {
 /** Snapshot of players currently in a zone — sent to a socket on zone entry */
 export interface ZonePresencePayload {
   zoneSlug: string;
-  players: Array<{ playerId: string; username: string }>;
+  players: Array<{ playerId: string; username: string; characterName?: string | null }>;
 }
 
 /** Broadcast to zone-mates when a player submits an action (before AI narration arrives) */
