@@ -385,9 +385,10 @@ export function registerSocketHandlers(
 
         const basePayload = {
           zoneSlug: finalZone.slug,
-          sessionId: activeSessionId,
+          // NOTE: sessionId deliberately omitted here — it is added per-audience below.
+          // Broadcasting the actor's sessionId to zone-mates causes observers to overwrite
+          // their own sessionId, which breaks their subsequent player:action validation.
           timestamp: new Date().toISOString(),
-          ...(result.suggestions && result.suggestions.length > 0 && { suggestions: result.suggestions }),
           ...(mentions.length > 0 && { mentions }),
           ...(finalZone.atmosphereTags?.length && { atmosphereTags: finalZone.atmosphereTags }),
           ...(zoneNpcsPayload.length > 0 && { zoneNpcs: zoneNpcsPayload }),
@@ -435,24 +436,40 @@ export function registerSocketHandlers(
         const observerText = [narratorText, npcSpeechObserver].filter(Boolean).join('\n\n')
           || result.narration;
 
-        // Zone-mates (not actor): narrator + observer-framed NPC speech
+        // Determine whether a personal event will follow for the actor.
+        // Suggestions must appear on the actor's LAST log entry, so they are withheld
+        // from the narrator event and placed on the personal event instead when one follows.
+        const personalText = [internalText, npcSpeechActor].filter(Boolean).join('\n\n');
+        const hasPersonalContent = Boolean(personalText);
+        const hasSuggestions = result.suggestions && result.suggestions.length > 0;
+
+        // Zone-mates (not actor): narrator + observer-framed NPC speech + suggestions.
+        // Observers don't receive a personal event, so suggestions go here directly.
+        // No sessionId — observers must not have their own session ID overwritten.
         socket.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('world:narration', {
           ...basePayload,
           text: observerText,
+          ...(hasSuggestions && { suggestions: result.suggestions }),
         });
 
-        // Actor: narrator only (NPC speech delivered below via personal event)
+        // Actor: narrator only + sessionId.
+        // If a personal event follows, suggestions are withheld here and sent there instead,
+        // so they appear on the final log entry (narration-internal) rather than disappearing.
         socket.emit('world:narration', {
           ...basePayload,
+          sessionId: activeSessionId,
           text: narratorText || result.narration,
+          ...(!hasPersonalContent && hasSuggestions && { suggestions: result.suggestions }),
         });
 
-        // Actor only: internal voice + actor-framed NPC speech
-        const personalText = [internalText, npcSpeechActor].filter(Boolean).join('\n\n');
-        if (personalText) {
+        // Actor only: internal voice + actor-framed NPC speech, carrying the suggestions
+        // so they anchor to this final log entry.
+        if (hasPersonalContent) {
           socket.emit('world:narration:personal', {
             ...basePayload,
+            sessionId: activeSessionId,
             text: personalText,
+            ...(hasSuggestions && { suggestions: result.suggestions }),
           });
         }
 

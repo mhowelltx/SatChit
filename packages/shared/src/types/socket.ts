@@ -56,7 +56,8 @@ export interface NameMention {
 export interface NarrationPayload {
   text: string;
   zoneSlug: string;
-  sessionId: string;
+  /** Present only on payloads addressed to the acting player; omitted from zone-wide observer broadcasts. */
+  sessionId?: string;
   timestamp: string;
   /** Suggested player actions generated after this narration */
   suggestions?: string[];
