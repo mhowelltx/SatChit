@@ -148,7 +148,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
   // Get the Veda for a world (accepts slug) — Rishi only
   router.get('/:slug/veda', rishi, async (req, res) => {
     try {
-      const world = await prisma.world.findUnique({ where: { slug: req.params.slug } });
+      const world = await prisma.world.findUnique({ where: { slug: String(req.params['slug']) } });
       if (!world) return res.status(404).json({ error: 'World not found.' });
 
       const [zones, entities, lore, recentEvents] = await Promise.all([
@@ -166,7 +166,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
   // List player-built features for a world — Rishi only
   router.get('/:slug/features', rishi, async (req, res) => {
     try {
-      const world = await prisma.world.findUnique({ where: { slug: req.params.slug } });
+      const world = await prisma.world.findUnique({ where: { slug: String(req.params['slug']) } });
       if (!world) return res.status(404).json({ error: 'World not found.' });
 
       const features = await worldFeatureService.findByWorld(world.id);
@@ -181,7 +181,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
   // Update a zone
   router.patch('/:slug/veda/zones/:zoneSlug', rishi, async (req, res) => {
     try {
-      const world = await prisma.world.findUnique({ where: { slug: req.params.slug } });
+      const world = await prisma.world.findUnique({ where: { slug: String(req.params['slug']) } });
       if (!world) return res.status(404).json({ error: 'World not found.' });
 
       const { name, description, rawContent, atmosphereTags } = req.body as {
@@ -192,7 +192,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
       };
 
       const zone = await prisma.vedaZone.update({
-        where: { worldId_slug: { worldId: world.id, slug: req.params.zoneSlug } },
+        where: { worldId_slug: { worldId: world.id, slug: String(req.params['zoneSlug']) } },
         data: {
           ...(name !== undefined && { name }),
           ...(description !== undefined && { description }),
@@ -218,7 +218,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
       };
 
       const entity = await prisma.vedaEntity.update({
-        where: { id: req.params.entityId },
+        where: { id: String(req.params['entityId']) },
         data: {
           ...(name !== undefined && { name }),
           ...(description !== undefined && { description }),
@@ -243,7 +243,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
       };
 
       const lore = await prisma.vedaLore.update({
-        where: { id: req.params.loreId },
+        where: { id: String(req.params['loreId']) },
         data: {
           ...(title !== undefined && { title }),
           ...(category !== undefined && { category: category as any }),
@@ -263,7 +263,7 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
       const { description } = req.body as { description?: string };
 
       const event = await prisma.vedaEvent.update({
-        where: { id: req.params.eventId },
+        where: { id: String(req.params['eventId']) },
         data: {
           ...(description !== undefined && { description }),
         },

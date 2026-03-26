@@ -10,7 +10,8 @@ export function createNPCsRouter(prisma: PrismaClient): Router {
   // GET /api/worlds/:slug/npcs
   router.get('/:slug/npcs', rishi, async (req, res) => {
     try {
-      const world = await prisma.world.findUnique({ where: { slug: req.params.slug } });
+      const slug = String(req.params['slug']);
+      const world = await prisma.world.findUnique({ where: { slug } });
       if (!world) return res.status(404).json({ error: 'World not found.' });
 
       const npcs = await prisma.nPC.findMany({
@@ -31,7 +32,7 @@ export function createNPCsRouter(prisma: PrismaClient): Router {
   router.get('/npcs/:id', rishi, async (req, res) => {
     try {
       const npc = await prisma.nPC.findUnique({
-        where: { id: req.params.id },
+        where: { id: String(req.params['id']) },
         include: {
           currentZone: true,
           inventory: { include: { item: true } },
@@ -62,7 +63,7 @@ export function createNPCsRouter(prisma: PrismaClient): Router {
         };
 
       const npc = await prisma.nPC.update({
-        where: { id: req.params.id },
+        where: { id: String(req.params['id']) },
         data: {
           ...(name !== undefined && { name }),
           ...(physicalDescription !== undefined && { physicalDescription }),
