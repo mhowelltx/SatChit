@@ -25,7 +25,7 @@ export class WorldFeatureService {
         featureType: (data.featureType as any) ?? 'OTHER',
         builtByPlayerId: data.builtByPlayerId ?? null,
         builtByCharacterId: data.builtByCharacterId ?? null,
-        attributes: data.attributes ?? {},
+        attributes: (data.attributes ?? {}) as any,
       },
     });
     return feature as unknown as WorldFeature;
