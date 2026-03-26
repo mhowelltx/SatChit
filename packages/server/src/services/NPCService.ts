@@ -22,6 +22,10 @@ export interface CreateNPCData {
 export class NPCService {
   constructor(private prisma: PrismaClient) {}
 
+  get prismaRef(): PrismaClient {
+    return this.prisma;
+  }
+
   async create(data: CreateNPCData): Promise<NPC> {
     const npc = await this.prisma.nPC.create({
       data: {
@@ -122,6 +126,30 @@ export class NPCService {
       update: { score: newScore, notes: updatedNotes, lastInteraction: new Date() },
     });
     return rel as unknown as NPCRelationship;
+  }
+
+  // ── Memory & Social Graph ──────────────────────────────────────────────────
+
+  /** Append a memory entry to the NPC, keeping only the last 20. */
+  async appendMemory(npcId: string, memory: string): Promise<void> {
+    const npc = await this.prisma.nPC.findUnique({ where: { id: npcId }, select: { memories: true } });
+    if (!npc) return;
+    const updated = [...npc.memories.slice(-19), memory];
+    await this.prisma.nPC.update({ where: { id: npcId }, data: { memories: updated } });
+  }
+
+  /** Record that this NPC knows another NPC (idempotent). */
+  async addKnownNpc(npcId: string, knownNpcId: string): Promise<void> {
+    const npc = await this.prisma.nPC.findUnique({ where: { id: npcId }, select: { knownNpcIds: true } });
+    if (!npc || npc.knownNpcIds.includes(knownNpcId)) return;
+    await this.prisma.nPC.update({ where: { id: npcId }, data: { knownNpcIds: { push: knownNpcId } } });
+  }
+
+  /** Record that this NPC knows a player character (idempotent). */
+  async addKnownCharacter(npcId: string, characterId: string): Promise<void> {
+    const npc = await this.prisma.nPC.findUnique({ where: { id: npcId }, select: { knownCharacterIds: true } });
+    if (!npc || npc.knownCharacterIds.includes(characterId)) return;
+    await this.prisma.nPC.update({ where: { id: npcId }, data: { knownCharacterIds: { push: characterId } } });
   }
 
   async update(npcId: string, data: Partial<CreateNPCData>): Promise<NPC> {

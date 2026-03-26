@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { VedaZone, VedaEntity, VedaEvent, VedaLore, EntityType, LoreCategory } from '@satchit/shared';
+import type { VedaZone, VedaEntity, VedaEvent, VedaLore, VedaZoneEdge, EntityType, LoreCategory } from '@satchit/shared';
 
 export class VedaService {
   constructor(private prisma: PrismaClient) {}
@@ -133,5 +133,35 @@ export class VedaService {
   async listLore(worldId: string): Promise<VedaLore[]> {
     const lore = await this.prisma.vedaLore.findMany({ where: { worldId } });
     return lore as VedaLore[];
+  }
+
+  // ── Zone Graph ───────────────────────────────────────────────────────────────
+
+  /**
+   * Record a traversal edge between two zone slugs. Stores both directions so the
+   * graph is undirected. Returns the forward edge if newly created, null if it
+   * already existed (so callers can broadcast only new edges).
+   */
+  async saveZoneEdge(worldId: string, fromZoneSlug: string, toZoneSlug: string): Promise<VedaZoneEdge | null> {
+    // Save reverse edge first (fire-and-forget upsert, we don't need the result)
+    await this.prisma.zoneEdge.upsert({
+      where: { worldId_fromZoneSlug_toZoneSlug: { worldId, fromZoneSlug: toZoneSlug, toZoneSlug: fromZoneSlug } },
+      create: { worldId, fromZoneSlug: toZoneSlug, toZoneSlug: fromZoneSlug },
+      update: {},
+    });
+
+    // Save forward edge and detect if it was newly created
+    const existing = await this.prisma.zoneEdge.findUnique({
+      where: { worldId_fromZoneSlug_toZoneSlug: { worldId, fromZoneSlug, toZoneSlug } },
+    });
+    if (existing) return null; // already known — no broadcast needed
+
+    const edge = await this.prisma.zoneEdge.create({ data: { worldId, fromZoneSlug, toZoneSlug } });
+    return edge as VedaZoneEdge;
+  }
+
+  async listZoneEdges(worldId: string): Promise<VedaZoneEdge[]> {
+    const edges = await this.prisma.zoneEdge.findMany({ where: { worldId } });
+    return edges as VedaZoneEdge[];
   }
 }

@@ -1,4 +1,4 @@
-import type { VedaZone, VedaEntity, VedaEvent, VedaLore, WorldFeature } from './veda.js';
+import type { VedaZone, VedaEntity, VedaEvent, VedaLore, WorldFeature, VedaZoneEdge } from './veda.js';
 
 // ── Client → Server ──────────────────────────────────────────────────────────
 
@@ -45,11 +45,32 @@ export interface NarrationPayload {
   mentions?: NameMention[];
   /** Atmosphere/mood tags for the current zone */
   atmosphereTags?: string[];
+  /** Known NPCs currently in this zone, for the environment panel */
+  zoneNpcs?: Array<{
+    name: string;
+    disposition: string;
+    relationshipScore?: number;
+    physicalDescription?: string;
+    knownPlayer?: boolean;
+    traits?: string[];
+    backstory?: string;
+  }>;
+  /** Full rawContent description of the current/destination zone on zone entry/transition */
+  zoneDescription?: string;
+}
+
+/** Sent once after session:join with world/character identity and the full discovered zone graph */
+export interface SessionInfoPayload {
+  worldName: string;
+  characterName: string | null;
+  mapZones: Array<{ slug: string; name: string }>;
+  mapEdges: Array<{ from: string; to: string }>;
 }
 
 export interface PlayerMovedPayload {
   playerId: string;
   username: string;
+  characterName?: string | null;
   fromZoneSlug: string | null;
   toZoneSlug: string;
 }
@@ -57,6 +78,7 @@ export interface PlayerMovedPayload {
 export interface PlayerJoinedPayload {
   playerId: string;
   username: string;
+  characterName?: string | null;
   zoneSlug: string;
 }
 
@@ -65,11 +87,11 @@ export interface PlayerLeftPayload {
   username: string;
 }
 
-export type VedaUpdateType = 'zone' | 'entity' | 'event' | 'lore' | 'feature';
+export type VedaUpdateType = 'zone' | 'entity' | 'event' | 'lore' | 'feature' | 'edge';
 
 export interface VedaUpdatePayload {
   type: VedaUpdateType;
-  data: VedaZone | VedaEntity | VedaEvent | VedaLore | WorldFeature;
+  data: VedaZone | VedaEntity | VedaEvent | VedaLore | WorldFeature | VedaZoneEdge;
 }
 
 export interface ErrorPayload {
@@ -80,7 +102,7 @@ export interface ErrorPayload {
 /** Snapshot of players currently in a zone — sent to a socket on zone entry */
 export interface ZonePresencePayload {
   zoneSlug: string;
-  players: Array<{ playerId: string; username: string }>;
+  players: Array<{ playerId: string; username: string; characterName?: string | null }>;
 }
 
 /** Broadcast to zone-mates when a player submits an action (before AI narration arrives) */
@@ -110,6 +132,7 @@ export interface ServerToClientEvents {
   'player:left': (payload: PlayerLeftPayload) => void;
   'veda:update': (payload: VedaUpdatePayload) => void;
   'session:error': (payload: ErrorPayload) => void;
+  'session:info': (payload: SessionInfoPayload) => void;
   'zone:presence': (payload: ZonePresencePayload) => void;
   'player:action:echo': (payload: PlayerActionEchoPayload) => void;
   'zone:chat': (payload: ZoneChatPayload) => void;

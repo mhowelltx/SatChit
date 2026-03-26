@@ -1,4 +1,9 @@
+'use client';
+
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import { getStoredUserId } from '@/lib/auth';
 
 interface VedaZone {
   id: string;
@@ -6,6 +11,7 @@ interface VedaZone {
   name: string;
   description: string;
   rawContent: string;
+  atmosphereTags?: string[];
   discoveredAt: string;
 }
 
@@ -34,6 +40,7 @@ interface VedaLore {
 
 interface NPC {
   id: string;
+  worldId: string;
   name: string;
   species: string | null;
   race: string | null;
@@ -45,6 +52,9 @@ interface NPC {
   abilities: string[];
   backstory: string | null;
   disposition: string;
+  memories: string[];
+  knownNpcIds: string[];
+  knownCharacterIds: string[];
   currentZone: { name: string; slug: string } | null;
   updatedAt: string;
 }
@@ -69,39 +79,9 @@ interface VedaData {
   recentEvents: VedaEvent[];
 }
 
-async function getVeda(slug: string): Promise<VedaData | null> {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
-  try {
-    const res = await fetch(`${apiUrl}/api/worlds/${slug}/veda`, { cache: 'no-store' });
-    if (!res.ok) return null;
-    return res.json() as Promise<VedaData>;
-  } catch {
-    return null;
-  }
-}
-
-async function getFeatures(slug: string): Promise<WorldFeature[]> {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
-  try {
-    const res = await fetch(`${apiUrl}/api/worlds/${slug}/features`, { cache: 'no-store' });
-    if (!res.ok) return [];
-    const data = await res.json() as { features: WorldFeature[] };
-    return data.features;
-  } catch {
-    return [];
-  }
-}
-
-async function getNPCs(slug: string): Promise<NPC[]> {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
-  try {
-    const res = await fetch(`${apiUrl}/api/worlds/${slug}/npcs`, { cache: 'no-store' });
-    if (!res.ok) return [];
-    const data = await res.json() as { npcs: NPC[] };
-    return data.npcs;
-  } catch {
-    return [];
-  }
+interface Character {
+  id: string;
+  name: string;
 }
 
 function dispositionColor(d: string): string {
@@ -137,9 +117,105 @@ const tag: React.CSSProperties = {
   marginBottom: '0.4rem',
 };
 
-export default async function VedaPage({ params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params;
-  const [veda, npcs, features] = await Promise.all([getVeda(slug), getNPCs(slug), getFeatures(slug)]);
+export default function VedaPage() {
+  const params = useParams();
+  const slug = params['slug'] as string;
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+
+  const [authState, setAuthState] = useState<'loading' | 'denied' | 'ok'>('loading');
+  const [userId, setUserId] = useState<string | null>(null);
+  const [veda, setVeda] = useState<VedaData | null>(null);
+  const [npcs, setNpcs] = useState<NPC[]>([]);
+  const [features, setFeatures] = useState<WorldFeature[]>([]);
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [dataLoading, setDataLoading] = useState(true);
+
+  useEffect(() => {
+    async function checkAuth() {
+      const uid = getStoredUserId();
+      if (!uid) { setAuthState('denied'); return; }
+
+      try {
+        const res = await fetch(`${apiUrl}/api/auth/me?userId=${uid}`);
+        if (!res.ok) { setAuthState('denied'); return; }
+        const data = await res.json() as { user?: { role: string } };
+        if (data?.user?.role !== 'ADMIN') { setAuthState('denied'); return; }
+        setUserId(uid);
+        setAuthState('ok');
+      } catch {
+        setAuthState('denied');
+      }
+    }
+    checkAuth();
+  }, [apiUrl]);
+
+  useEffect(() => {
+    if (authState !== 'ok' || !userId) return;
+
+    async function loadData() {
+      setDataLoading(true);
+      const headers = { 'x-rishi-id': userId! };
+      try {
+        const [vedaRes, npcsRes, featuresRes] = await Promise.all([
+          fetch(`${apiUrl}/api/worlds/${slug}/veda`, { headers, cache: 'no-store' }),
+          fetch(`${apiUrl}/api/worlds/${slug}/npcs`, { headers, cache: 'no-store' }),
+          fetch(`${apiUrl}/api/worlds/${slug}/features`, { headers, cache: 'no-store' }),
+        ]);
+
+        if (vedaRes.ok) setVeda(await vedaRes.json() as VedaData);
+        if (npcsRes.ok) {
+          const npcData = await npcsRes.json() as { npcs: NPC[] };
+          setNpcs(npcData.npcs ?? []);
+
+          // Fetch characters for the world to resolve knownCharacterIds
+          const worldId = npcData.npcs[0]?.worldId;
+          if (worldId) {
+            const charRes = await fetch(`${apiUrl}/api/characters?worldId=${worldId}`);
+            if (charRes.ok) {
+              const charData = await charRes.json() as { characters: Character[] };
+              setCharacters(charData.characters ?? []);
+            }
+          }
+        }
+        if (featuresRes.ok) {
+          const fData = await featuresRes.json() as { features: WorldFeature[] };
+          setFeatures(fData.features ?? []);
+        }
+      } catch {
+        // Silently fail — partial data shown
+      }
+      setDataLoading(false);
+    }
+    loadData();
+  }, [authState, userId, slug, apiUrl]);
+
+  if (authState === 'loading') {
+    return (
+      <main style={{ maxWidth: '720px', margin: '0 auto', padding: '2rem', textAlign: 'center' }}>
+        <p style={{ color: 'var(--text-muted)' }}>Checking access…</p>
+      </main>
+    );
+  }
+
+  if (authState === 'denied') {
+    return (
+      <main style={{ maxWidth: '720px', margin: '0 auto', padding: '2rem', textAlign: 'center' }}>
+        <h2 style={{ color: 'var(--error)', marginBottom: '0.5rem' }}>Access Restricted</h2>
+        <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+          The Veda is available to Rishis only.
+        </p>
+        <Link href={`/worlds/${slug}`} style={{ color: 'var(--accent)' }}>← Back to world</Link>
+      </main>
+    );
+  }
+
+  if (dataLoading) {
+    return (
+      <main style={{ maxWidth: '720px', margin: '0 auto', padding: '2rem', textAlign: 'center' }}>
+        <p style={{ color: 'var(--text-muted)' }}>Loading Veda…</p>
+      </main>
+    );
+  }
 
   if (!veda) {
     return (
@@ -151,6 +227,11 @@ export default async function VedaPage({ params }: { params: Promise<{ slug: str
   }
 
   const { zones, entities, lore, recentEvents } = veda;
+
+  // Lookup maps for resolving known IDs to names
+  const npcById: Record<string, string> = Object.fromEntries(npcs.map(n => [n.id, n.name]));
+  const charById: Record<string, string> = Object.fromEntries(characters.map(c => [c.id, c.name]));
+
   const counts = [
     `${zones.length} zone${zones.length !== 1 ? 's' : ''}`,
     `${npcs.length} npc${npcs.length !== 1 ? 's' : ''}`,
@@ -167,9 +248,14 @@ export default async function VedaPage({ params }: { params: Promise<{ slug: str
         <Link href={`/worlds/${slug}`} style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
           ← {slug}
         </Link>
-        <Link href={`/worlds/${slug}/play`} style={{ color: 'var(--accent)', fontSize: '0.85rem' }}>
-          Enter World →
-        </Link>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'baseline' }}>
+          <Link href={`/worlds/${slug}/veda/edit`} style={{ color: 'var(--accent)', fontSize: '0.85rem' }}>
+            Edit Veda ↗
+          </Link>
+          <Link href={`/worlds/${slug}/play`} style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+            Enter World →
+          </Link>
+        </div>
       </div>
 
       <h1 style={{ color: 'var(--accent)', margin: '1rem 0 0.25rem' }}>Veda</h1>
@@ -184,6 +270,11 @@ export default async function VedaPage({ params }: { params: Promise<{ slug: str
             <div style={{ color: 'var(--accent)', fontWeight: 'bold', marginBottom: '0.2rem' }}>{z.name}</div>
             <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '0.4rem' }}>{z.slug}</div>
             <div style={{ color: 'var(--text)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>{z.description}</div>
+            {z.atmosphereTags && z.atmosphereTags.length > 0 && (
+              <div style={{ marginBottom: '0.4rem' }}>
+                {z.atmosphereTags.map((t, i) => <span key={i} style={{ ...tag, marginRight: '0.3rem' }}>{t}</span>)}
+              </div>
+            )}
             <details>
               <summary style={{ color: 'var(--text-muted)', fontSize: '0.8rem', cursor: 'pointer' }}>Raw content</summary>
               <div style={{ color: 'var(--text)', fontSize: '0.85rem', marginTop: '0.5rem', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
@@ -244,6 +335,34 @@ export default async function VedaPage({ params }: { params: Promise<{ slug: str
                   {n.abilities.map((a, i) => <span key={i} style={{ ...tag, marginRight: '0.3rem' }}>{a}</span>)}
                 </div>
               </details>
+            )}
+
+            {/* Memory & Social Knowledge */}
+            {n.memories.length > 0 && (
+              <details style={{ marginTop: '0.4rem' }}>
+                <summary style={{ color: 'var(--text-muted)', fontSize: '0.8rem', cursor: 'pointer' }}>
+                  Memories ({n.memories.length})
+                </summary>
+                <div style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: 'var(--text)', lineHeight: 1.5 }}>
+                  {n.memories.map((m, i) => (
+                    <div key={i} style={{ marginBottom: '0.2rem', paddingLeft: '0.5rem', borderLeft: '1px solid var(--border)' }}>
+                      {m}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+            {n.knownNpcIds.length > 0 && (
+              <div style={{ marginTop: '0.3rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                <span style={{ opacity: 0.7 }}>Knows NPCs: </span>
+                {n.knownNpcIds.map(id => npcById[id] ?? id).filter(Boolean).join(', ')}
+              </div>
+            )}
+            {n.knownCharacterIds.length > 0 && (
+              <div style={{ marginTop: '0.2rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                <span style={{ opacity: 0.7 }}>Knows Characters: </span>
+                {n.knownCharacterIds.map(id => charById[id] ?? id).filter(Boolean).join(', ')}
+              </div>
             )}
           </div>
         ))}

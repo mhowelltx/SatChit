@@ -21,6 +21,7 @@ function aiErrorMessage(err: unknown): string {
 import { SessionService } from '../services/SessionService.js';
 import { WorldGeneratorService } from '../services/WorldGeneratorService.js';
 import { VedaService } from '../services/VedaService.js';
+import { NPCService } from '../services/NPCService.js';
 import slugify from 'slugify';
 
 type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -34,7 +35,7 @@ function zoneRoom(worldId: string, zoneSlug: string): string {
 // Shared across all socket connections — tracks who is in each zone room.
 // Keyed by zoneRoom string; inner map keyed by socket.id so multiple tabs work.
 
-interface ZonePlayer { playerId: string; username: string; }
+interface ZonePlayer { playerId: string; username: string; characterName: string | null; }
 const zoneRegistry = new Map<string, Map<string, ZonePlayer>>();
 
 function regAdd(room: string, socketId: string, info: ZonePlayer) {
@@ -68,6 +69,7 @@ export function registerSocketHandlers(
   const sessionService = new SessionService(prisma);
   const worldGenerator = new WorldGeneratorService(prisma, ai);
   const vedaService = new VedaService(prisma);
+  const npcService = new NPCService(prisma);
 
   io.on('connection', (socket: AppSocket) => {
     let activeSessionId: string | null = null;
@@ -93,6 +95,8 @@ export function registerSocketHandlers(
     let resolvedPlayerId: string | null = null;
     /** Cached username to avoid repeated DB queries */
     let cachedUsername: string | null = null;
+    /** Cached character name for zone presence payloads */
+    let cachedCharacterName: string | null = null;
 
     socket.on('session:join', async (payload: SessionJoinPayload) => {
       try {
@@ -123,6 +127,7 @@ export function registerSocketHandlers(
           ? await prisma.character.findUnique({ where: { id: characterId } })
           : null;
         activeCharacterId = character?.id ?? null;
+        cachedCharacterName = character?.name ?? null;
 
         const session = await sessionService.create(world.id, resolvedPlayerId, activeCharacterId ?? undefined);
         activeSessionId = session.id;
@@ -137,6 +142,15 @@ export function registerSocketHandlers(
         const startZone = targetZoneSlug
           ? (zones.find(z => z.slug === targetZoneSlug) ?? zones[0])
           : zones[0];
+
+        // Emit session info (world name, character name, full zone map) before narration
+        const allEdges = await vedaService.listZoneEdges(world.id);
+        socket.emit('session:info', {
+          worldName: world.name,
+          characterName: character?.name ?? null,
+          mapZones: zones.map(z => ({ slug: z.slug, name: z.name })),
+          mapEdges: allEdges.map(e => ({ from: e.fromZoneSlug, to: e.toZoneSlug })),
+        });
 
         if (startZone) {
           activeZoneSlug = startZone.slug;
@@ -153,7 +167,29 @@ export function registerSocketHandlers(
           }
 
           // Register self after reading others
-          regAdd(room, socket.id, { playerId: resolvedPlayerId, username: cachedUsername });
+          regAdd(room, socket.id, { playerId: resolvedPlayerId, username: cachedUsername, characterName: cachedCharacterName });
+
+          // Fetch NPCs for start zone with full detail fields for environment panel
+          const startZoneNpcs = await npcService.listByZone(startZone.id);
+          const startNpcsWithRel = await Promise.all(
+            startZoneNpcs.map(async n => {
+              const rel = await npcService.getRelationship(n.id, resolvedPlayerId!);
+              const knownPlayer = resolvedPlayerId
+                ? (n.knownCharacterIds as string[]).includes(resolvedPlayerId)
+                : false;
+              return {
+                name: n.name,
+                disposition: n.disposition,
+                ...(rel ? { relationshipScore: rel.score } : {}),
+                physicalDescription: n.physicalDescription ?? undefined,
+                knownPlayer,
+                ...(knownPlayer && {
+                  traits: (n.traits as string[]) ?? [],
+                  backstory: n.backstory ?? undefined,
+                }),
+              };
+            }),
+          );
 
           socket.emit('world:narration', {
             text: startZone.rawContent,
@@ -161,12 +197,14 @@ export function registerSocketHandlers(
             sessionId: session.id,
             timestamp: new Date().toISOString(),
             atmosphereTags: startZone.atmosphereTags,
+            zoneNpcs: startNpcsWithRel,
           });
 
           // Notify others in zone
           socket.to(room).emit('player:joined', {
             playerId: resolvedPlayerId,
             username: cachedUsername,
+            characterName: cachedCharacterName,
             zoneSlug: startZone.slug,
           });
         }
@@ -258,6 +296,7 @@ export function registerSocketHandlers(
           socket.to(zoneRoom(activeWorldId, fromSlug!)).emit('player:moved', {
             playerId: pid,
             username: uname,
+            characterName: cachedCharacterName,
             fromZoneSlug: fromSlug,
             toZoneSlug: toSlug,
           });
@@ -271,13 +310,14 @@ export function registerSocketHandlers(
           if (newRoomOthers.length > 0) {
             socket.emit('zone:presence', { zoneSlug: toSlug, players: newRoomOthers });
           }
-          regAdd(newRoom, socket.id, { playerId: pid, username: uname });
+          regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
 
           await sessionService.updateZone(activeSessionId, result.nextZone.id);
 
           socket.to(zoneRoom(activeWorldId, toSlug)).emit('player:joined', {
             playerId: pid,
             username: uname,
+            characterName: cachedCharacterName,
             zoneSlug: toSlug,
           });
 
@@ -287,19 +327,53 @@ export function registerSocketHandlers(
               data: result.nextZone,
             });
           }
+
+          // Record zone traversal edge (undirected) and broadcast if new
+          const newEdge = await vedaService.saveZoneEdge(activeWorldId, fromSlug!, toSlug);
+          if (newEdge) {
+            io.to(`world:${activeWorldId}`).emit('veda:update', {
+              type: 'edge',
+              data: newEdge,
+            });
+          }
         } else {
           await sessionService.updateZone(activeSessionId, result.zone.id);
         }
 
         // Build mentions list from known entity types
+        const npcNames = (result.npcsPresent ?? []).map(n => (typeof n === 'string' ? n : n.name));
         const mentions = _buildMentions(
-          result.npcsPresent ?? [],
+          npcNames,
           result.characterName,
           rishiName,
         );
 
         // Use the final zone (after possible transition)
         const finalZone = result.nextZone ?? result.zone;
+
+        // Build enriched zoneNpcs payload (with full NPC detail fields for expand/collapse)
+        const zoneNpcsPayload = await Promise.all(
+          (result.npcsPresent ?? []).map(async (n) => {
+            const name = typeof n === 'string' ? n : n.name;
+            const disposition = typeof n === 'string' ? 'neutral' : n.disposition;
+            const score = result.npcRelationshipScores?.[name];
+            const fullNpc = await npcService.findByName(activeWorldId!, name);
+            const knownPlayer = fullNpc && resolvedPlayerId
+              ? (fullNpc.knownCharacterIds as string[]).includes(resolvedPlayerId)
+              : false;
+            return {
+              name,
+              disposition,
+              ...(score !== undefined && { relationshipScore: score }),
+              physicalDescription: fullNpc?.physicalDescription ?? undefined,
+              knownPlayer,
+              ...(knownPlayer && {
+                traits: (fullNpc?.traits as string[]) ?? [],
+                backstory: fullNpc?.backstory ?? undefined,
+              }),
+            };
+          }),
+        );
 
         const narrationPayload = {
           text: result.narration,
@@ -309,6 +383,8 @@ export function registerSocketHandlers(
           ...(result.suggestions && result.suggestions.length > 0 && { suggestions: result.suggestions }),
           ...(mentions.length > 0 && { mentions }),
           ...(finalZone.atmosphereTags?.length && { atmosphereTags: finalZone.atmosphereTags }),
+          ...(zoneNpcsPayload.length > 0 && { zoneNpcs: zoneNpcsPayload }),
+          ...(result.zoneDescription && { zoneDescription: result.zoneDescription }),
         };
 
         // Send narration to everyone in the (possibly new) zone
@@ -386,6 +462,7 @@ export function registerSocketHandlers(
           socket.to(zoneRoom(activeWorldId, fromSlug)).emit('player:moved', {
             playerId: pid,
             username: uname,
+            characterName: cachedCharacterName,
             fromZoneSlug: fromSlug,
             toZoneSlug: targetSlug,
           });
@@ -402,7 +479,7 @@ export function registerSocketHandlers(
         if (newRoomOthers.length > 0) {
           socket.emit('zone:presence', { zoneSlug: targetSlug, players: newRoomOthers });
         }
-        regAdd(newRoom, socket.id, { playerId: pid, username: uname });
+        regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
 
         // Check if zone exists in Veda or generate it
         let zone = await vedaService.getZone(activeWorldId, targetSlug);
@@ -452,6 +529,7 @@ export function registerSocketHandlers(
         socket.to(newRoom).emit('player:joined', {
           playerId: pid,
           username: uname,
+          characterName: cachedCharacterName,
           zoneSlug: targetSlug,
         });
       } catch (err) {
