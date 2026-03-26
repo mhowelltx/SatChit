@@ -35,7 +35,7 @@ function zoneRoom(worldId: string, zoneSlug: string): string {
 // Shared across all socket connections — tracks who is in each zone room.
 // Keyed by zoneRoom string; inner map keyed by socket.id so multiple tabs work.
 
-interface ZonePlayer { playerId: string; username: string; }
+interface ZonePlayer { playerId: string; username: string; characterName: string | null; }
 const zoneRegistry = new Map<string, Map<string, ZonePlayer>>();
 
 function regAdd(room: string, socketId: string, info: ZonePlayer) {
@@ -95,6 +95,8 @@ export function registerSocketHandlers(
     let resolvedPlayerId: string | null = null;
     /** Cached username to avoid repeated DB queries */
     let cachedUsername: string | null = null;
+    /** Cached character name for zone presence payloads */
+    let cachedCharacterName: string | null = null;
 
     socket.on('session:join', async (payload: SessionJoinPayload) => {
       try {
@@ -125,6 +127,7 @@ export function registerSocketHandlers(
           ? await prisma.character.findUnique({ where: { id: characterId } })
           : null;
         activeCharacterId = character?.id ?? null;
+        cachedCharacterName = character?.name ?? null;
 
         const session = await sessionService.create(world.id, resolvedPlayerId, activeCharacterId ?? undefined);
         activeSessionId = session.id;
@@ -164,7 +167,7 @@ export function registerSocketHandlers(
           }
 
           // Register self after reading others
-          regAdd(room, socket.id, { playerId: resolvedPlayerId, username: cachedUsername });
+          regAdd(room, socket.id, { playerId: resolvedPlayerId, username: cachedUsername, characterName: cachedCharacterName });
 
           // Fetch NPCs for start zone with full detail fields for environment panel
           const startZoneNpcs = await npcService.listByZone(startZone.id);
@@ -201,6 +204,7 @@ export function registerSocketHandlers(
           socket.to(room).emit('player:joined', {
             playerId: resolvedPlayerId,
             username: cachedUsername,
+            characterName: cachedCharacterName,
             zoneSlug: startZone.slug,
           });
         }
@@ -292,6 +296,7 @@ export function registerSocketHandlers(
           socket.to(zoneRoom(activeWorldId, fromSlug!)).emit('player:moved', {
             playerId: pid,
             username: uname,
+            characterName: cachedCharacterName,
             fromZoneSlug: fromSlug,
             toZoneSlug: toSlug,
           });
@@ -305,13 +310,14 @@ export function registerSocketHandlers(
           if (newRoomOthers.length > 0) {
             socket.emit('zone:presence', { zoneSlug: toSlug, players: newRoomOthers });
           }
-          regAdd(newRoom, socket.id, { playerId: pid, username: uname });
+          regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
 
           await sessionService.updateZone(activeSessionId, result.nextZone.id);
 
           socket.to(zoneRoom(activeWorldId, toSlug)).emit('player:joined', {
             playerId: pid,
             username: uname,
+            characterName: cachedCharacterName,
             zoneSlug: toSlug,
           });
 
@@ -456,6 +462,7 @@ export function registerSocketHandlers(
           socket.to(zoneRoom(activeWorldId, fromSlug)).emit('player:moved', {
             playerId: pid,
             username: uname,
+            characterName: cachedCharacterName,
             fromZoneSlug: fromSlug,
             toZoneSlug: targetSlug,
           });
@@ -472,7 +479,7 @@ export function registerSocketHandlers(
         if (newRoomOthers.length > 0) {
           socket.emit('zone:presence', { zoneSlug: targetSlug, players: newRoomOthers });
         }
-        regAdd(newRoom, socket.id, { playerId: pid, username: uname });
+        regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
 
         // Check if zone exists in Veda or generate it
         let zone = await vedaService.getZone(activeWorldId, targetSlug);
@@ -522,6 +529,7 @@ export function registerSocketHandlers(
         socket.to(newRoom).emit('player:joined', {
           playerId: pid,
           username: uname,
+          characterName: cachedCharacterName,
           zoneSlug: targetSlug,
         });
       } catch (err) {

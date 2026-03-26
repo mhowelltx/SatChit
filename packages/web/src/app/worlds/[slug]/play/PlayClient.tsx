@@ -38,6 +38,7 @@ interface LogEntry {
 interface ZonePlayer {
   playerId: string;
   username: string;
+  characterName?: string | null;
 }
 
 interface PlayClientProps {
@@ -145,6 +146,8 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
   }>>([]);
   // NPC expand/collapse state
   const [expandedNpcNames, setExpandedNpcNames] = useState<Set<string>>(new Set());
+  // Player expand/collapse state
+  const [expandedPlayerIds, setExpandedPlayerIds] = useState<Set<string>>(new Set());
   // Zone region description for collapsible panel section
   const [zoneDescription, setZoneDescription] = useState<string | null>(null);
   const [zoneDescExpanded, setZoneDescExpanded] = useState(false);
@@ -199,6 +202,14 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     setExpandedNpcNames(prev => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  }, []);
+
+  const togglePlayerExpand = useCallback((id: string) => {
+    setExpandedPlayerIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   }, []);
@@ -268,11 +279,12 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     socket.on('player:joined', (payload: PlayerJoinedPayload) => {
       setZonePlayers((prev) => {
         if (prev.some(p => p.playerId === payload.playerId)) return prev;
-        return [...prev, { playerId: payload.playerId, username: payload.username }];
+        return [...prev, { playerId: payload.playerId, username: payload.username, characterName: payload.characterName }];
       });
+      const displayName = payload.characterName ?? payload.username;
       addLog({
         type: 'system',
-        text: `${payload.username} has entered ${payload.zoneSlug}.`,
+        text: `${displayName} has entered ${payload.zoneSlug}.`,
         timestamp: new Date().toISOString(),
       });
     });
@@ -291,13 +303,14 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
       setZonePlayers((prev) => {
         let updated = prev.filter(p => p.playerId !== payload.playerId);
         if (payload.toZoneSlug === currentZone) {
-          updated = [...updated, { playerId: payload.playerId, username: payload.username }];
+          updated = [...updated, { playerId: payload.playerId, username: payload.username, characterName: payload.characterName }];
         }
         return updated;
       });
+      const displayName = payload.characterName ?? payload.username;
       addLog({
         type: 'system',
-        text: `${payload.username} moved to ${payload.toZoneSlug}.`,
+        text: `${displayName} moved to ${payload.toZoneSlug}.`,
         timestamp: new Date().toISOString(),
       });
     });
@@ -835,15 +848,34 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
           })}
 
           {/* Active players */}
-          {zonePlayers.map((p) => (
-            <div
-              key={p.playerId}
-              style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.2rem' }}
-            >
-              <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--success)', display: 'inline-block', flexShrink: 0 }} />
-              <span style={{ color: 'var(--success)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.username}</span>
-            </div>
-          ))}
+          {zonePlayers.map((p) => {
+            const displayName = p.characterName ?? p.username;
+            const isExpanded = expandedPlayerIds.has(p.playerId);
+            return (
+              <div key={p.playerId} style={{ marginBottom: '0.2rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--success)', display: 'inline-block', flexShrink: 0 }} />
+                  <span style={{ color: 'var(--success)', fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {displayName}
+                  </span>
+                  {p.characterName && (
+                    <button
+                      onClick={() => togglePlayerExpand(p.playerId)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.6rem', padding: '0 2px', flexShrink: 0 }}
+                      title={isExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      {isExpanded ? '▲' : '▼'}
+                    </button>
+                  )}
+                </div>
+                {isExpanded && (
+                  <div style={{ marginLeft: '1rem', fontSize: '0.7rem', color: 'var(--text-muted)', borderLeft: '1px solid var(--border)', paddingLeft: '0.5rem', marginTop: '0.1rem' }}>
+                    Player: {p.username}
+                  </div>
+                )}
+              </div>
+            );
+          })}
 
           {zoneNpcs.length === 0 && zonePlayers.length === 0 && (
             <div style={{ color: 'var(--text-muted)', fontStyle: 'italic', opacity: 0.5 }}>
