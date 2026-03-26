@@ -233,11 +233,12 @@ export function registerSocketHandlers(
         const world = await prisma.world.findUnique({ where: { id: activeWorldId } });
         if (!world) return;
 
-        // Echo the action to zone-mates immediately (before AI responds)
+        // Echo a brief narrator-framed notification to zone-mates immediately (before AI responds)
+        const echoDisplayName = cachedCharacterName ?? cachedUsername ?? 'Someone';
         socket.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('player:action:echo', {
           playerId: resolvedPlayerId ?? session.playerId,
           username: cachedUsername ?? 'Unknown',
-          input: payload.input,
+          input: `${echoDisplayName} acts...`,
           zoneSlug: activeZoneSlug,
           timestamp: new Date().toISOString(),
         });
@@ -248,6 +249,12 @@ export function registerSocketHandlers(
         sessionActionCount += 1;
 
         const zoneTransientNPCs = transientNPCsByZone.get(activeZoneSlug) ?? [];
+        // Build list of other player characters present in the zone for NPC addressing context
+        const currentPid = resolvedPlayerId ?? session.playerId;
+        const otherCharactersPresent = regPlayers(zoneRoom(activeWorldId, activeZoneSlug))
+          .filter(p => p.playerId !== currentPid)
+          .map(p => ({ characterName: p.characterName ?? p.username, username: p.username }));
+
         const result = await worldGenerator.processAction(
           {
             id: world.id,
@@ -270,6 +277,7 @@ export function registerSocketHandlers(
           sessionActionCount,
           currentMood,
           zoneTransientNPCs,
+          otherCharactersPresent,
         );
 
         // Persist the updated transient NPC list for this zone
@@ -375,8 +383,7 @@ export function registerSocketHandlers(
           }),
         );
 
-        const narrationPayload = {
-          text: result.narration,
+        const basePayload = {
           zoneSlug: finalZone.slug,
           sessionId: activeSessionId,
           timestamp: new Date().toISOString(),
@@ -385,10 +392,69 @@ export function registerSocketHandlers(
           ...(finalZone.atmosphereTags?.length && { atmosphereTags: finalZone.atmosphereTags }),
           ...(zoneNpcsPayload.length > 0 && { zoneNpcs: zoneNpcsPayload }),
           ...(result.zoneDescription && { zoneDescription: result.zoneDescription }),
+          segments: result.segments,
         };
 
-        // Send narration to everyone in the (possibly new) zone
-        io.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('world:narration', narrationPayload);
+        // ── Per-audience narrative routing ───────────────────────────────────────
+        // Split segments into narrator, internal, and npc_speech voices, then
+        // deliver each to the appropriate audience.
+
+        const segments = result.segments;
+        const narratorText = segments
+          .filter(s => s.type === 'narrator')
+          .map(s => s.text)
+          .join('\n\n');
+
+        // NPC speech framed for observers (uses character name: "The Merchant says to Kiran:")
+        const npcSpeechObserver = segments
+          .filter(s => s.type === 'npc_speech')
+          .map(s => {
+            const target = s.addresseeCharacterName ? ` to ${s.addresseeCharacterName}` : '';
+            return `${s.speakerName ?? 'Someone'}${target}: "${s.text}"`;
+          })
+          .join('\n');
+
+        // NPC speech framed for the acting player (uses "you" when addressed directly)
+        const npcSpeechActor = segments
+          .filter(s => s.type === 'npc_speech')
+          .map(s => {
+            const isAddressee = s.addresseeCharacterName &&
+              s.addresseeCharacterName === cachedCharacterName;
+            const target = isAddressee
+              ? ' to you'
+              : s.addresseeCharacterName ? ` to ${s.addresseeCharacterName}` : '';
+            return `${s.speakerName ?? 'Someone'}${target}: "${s.text}"`;
+          })
+          .join('\n');
+
+        const internalText = segments
+          .filter(s => s.type === 'internal')
+          .map(s => s.text)
+          .join('\n\n');
+
+        const observerText = [narratorText, npcSpeechObserver].filter(Boolean).join('\n\n')
+          || result.narration;
+
+        // Zone-mates (not actor): narrator + observer-framed NPC speech
+        socket.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('world:narration', {
+          ...basePayload,
+          text: observerText,
+        });
+
+        // Actor: narrator only (NPC speech delivered below via personal event)
+        socket.emit('world:narration', {
+          ...basePayload,
+          text: narratorText || result.narration,
+        });
+
+        // Actor only: internal voice + actor-framed NPC speech
+        const personalText = [internalText, npcSpeechActor].filter(Boolean).join('\n\n');
+        if (personalText) {
+          socket.emit('world:narration:personal', {
+            ...basePayload,
+            text: personalText,
+          });
+        }
 
         // If the origin zone was newly created, broadcast veda update
         if (result.isNewZone) {
