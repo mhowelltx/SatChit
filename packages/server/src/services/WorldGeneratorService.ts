@@ -22,8 +22,10 @@ interface ActionResult {
   /** Whether nextZone was newly created during this action */
   isNewNextZone?: boolean;
   suggestions?: string[];
-  /** Names of NPCs present in the zone during this action */
-  npcsPresent?: string[];
+  /** NPCs present in the zone during this action (name + disposition) */
+  npcsPresent?: Array<{ name: string; disposition: string }>;
+  /** Relationship scores for NPCs present: name → score */
+  npcRelationshipScores?: Record<string, number>;
   /** Active player character name, if any */
   characterName?: string;
   /** AI-assigned mood extracted from this narration */
@@ -189,6 +191,32 @@ export class WorldGeneratorService {
       }
     }
 
+    // Build NPC memory and social context for AI awareness
+    const npcMemories: Record<string, string[]> = {};
+    const npcSocialGraph: Array<{ name: string; knowsNpcs: string[]; knowsCharacters: string[] }> = [];
+    if (npcsInZone.length > 0) {
+      // Collect all unique known NPC/character IDs across zone NPCs for batch lookup
+      const allKnownNpcIds = [...new Set(npcsInZone.flatMap(n => n.knownNpcIds as string[]))];
+      const allKnownCharIds = [...new Set(npcsInZone.flatMap(n => n.knownCharacterIds as string[]))];
+      const knownNpcs = allKnownNpcIds.length > 0
+        ? await this.npcService.prismaRef.nPC.findMany({ where: { id: { in: allKnownNpcIds } }, select: { id: true, name: true } })
+        : [];
+      const knownChars = allKnownCharIds.length > 0
+        ? await this.npcService.prismaRef.character.findMany({ where: { id: { in: allKnownCharIds } }, select: { id: true, name: true } })
+        : [];
+      const npcNameById = Object.fromEntries(knownNpcs.map(n => [n.id, n.name]));
+      const charNameById = Object.fromEntries(knownChars.map(c => [c.id, c.name]));
+
+      for (const npc of npcsInZone) {
+        npcMemories[npc.name] = (npc.memories as string[]).slice(-5);
+        npcSocialGraph.push({
+          name: npc.name,
+          knowsNpcs: (npc.knownNpcIds as string[]).map(id => npcNameById[id]).filter(Boolean),
+          knowsCharacters: (npc.knownCharacterIds as string[]).map(id => charNameById[id]).filter(Boolean),
+        });
+      }
+    }
+
     const context = {
       world: {
         name: world.name,
@@ -217,6 +245,8 @@ export class WorldGeneratorService {
       currentMood,
       zoneHistory,
       npcRelationships,
+      npcMemories,
+      npcSocialGraph,
       atmosphereTags: zone?.atmosphereTags,
     };
 
@@ -319,6 +349,9 @@ export class WorldGeneratorService {
     // Best-effort: update NPC relationships based on interaction
     await this.updateNPCRelationships(world, zone!, npcsInZone, narration, playerId, ai);
 
+    // Best-effort: update NPC social graph (who knows whom)
+    await this.updateNPCSocialGraph(npcsInZone, activeCharacterId(character));
+
     // Best-effort: log interactions with existing features
     await this.recordFeatureInteractions(zone!, featuresInZone, narration, playerId, activeCharacterId(character));
 
@@ -387,7 +420,8 @@ export class WorldGeneratorService {
       isNewZone,
       isNewNextZone,
       suggestions,
-      npcsPresent: npcsInZone.map((n) => n.name),
+      npcsPresent: npcsInZone.map((n) => ({ name: n.name, disposition: n.disposition as string })),
+      npcRelationshipScores: npcRelationships,
       characterName: characterContext?.name,
       nextMood,
       ...(newFeature ? { newFeature } : {}),
@@ -626,9 +660,43 @@ export class WorldGeneratorService {
           interaction.delta,
           interaction.note,
         );
+        // Append interaction note to NPC's own memories
+        if (interaction.note) {
+          const dateStr = new Date().toISOString().split('T')[0];
+          await this.npcService.appendMemory(npc.id, `${dateStr}: ${interaction.note}`);
+        }
       }
     } catch {
       // Relationship updates are best-effort
+    }
+  }
+
+  /**
+   * Update each known NPC's social graph:
+   * - All known NPCs in the zone learn each other
+   * - All known NPCs in the zone learn the active character (if any)
+   */
+  private async updateNPCSocialGraph(
+    npcsInZone: Awaited<ReturnType<NPCService['listByZone']>>,
+    characterId: string | null,
+  ): Promise<void> {
+    if (npcsInZone.length === 0) return;
+    try {
+      // NPC-NPC co-presence (undirected)
+      for (let i = 0; i < npcsInZone.length; i++) {
+        for (let j = i + 1; j < npcsInZone.length; j++) {
+          await this.npcService.addKnownNpc(npcsInZone[i].id, npcsInZone[j].id);
+          await this.npcService.addKnownNpc(npcsInZone[j].id, npcsInZone[i].id);
+        }
+      }
+      // NPC-character meeting
+      if (characterId) {
+        for (const npc of npcsInZone) {
+          await this.npcService.addKnownCharacter(npc.id, characterId);
+        }
+      }
+    } catch {
+      // Best-effort
     }
   }
 }

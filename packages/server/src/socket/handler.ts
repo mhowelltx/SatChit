@@ -21,6 +21,7 @@ function aiErrorMessage(err: unknown): string {
 import { SessionService } from '../services/SessionService.js';
 import { WorldGeneratorService } from '../services/WorldGeneratorService.js';
 import { VedaService } from '../services/VedaService.js';
+import { NPCService } from '../services/NPCService.js';
 import slugify from 'slugify';
 
 type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -68,6 +69,7 @@ export function registerSocketHandlers(
   const sessionService = new SessionService(prisma);
   const worldGenerator = new WorldGeneratorService(prisma, ai);
   const vedaService = new VedaService(prisma);
+  const npcService = new NPCService(prisma);
 
   io.on('connection', (socket: AppSocket) => {
     let activeSessionId: string | null = null;
@@ -138,6 +140,15 @@ export function registerSocketHandlers(
           ? (zones.find(z => z.slug === targetZoneSlug) ?? zones[0])
           : zones[0];
 
+        // Emit session info (world name, character name, full zone map) before narration
+        const allEdges = await vedaService.listZoneEdges(world.id);
+        socket.emit('session:info', {
+          worldName: world.name,
+          characterName: character?.name ?? null,
+          mapZones: zones.map(z => ({ slug: z.slug, name: z.name })),
+          mapEdges: allEdges.map(e => ({ from: e.fromZoneSlug, to: e.toZoneSlug })),
+        });
+
         if (startZone) {
           activeZoneSlug = startZone.slug;
           await sessionService.updateZone(session.id, startZone.id);
@@ -155,12 +166,22 @@ export function registerSocketHandlers(
           // Register self after reading others
           regAdd(room, socket.id, { playerId: resolvedPlayerId, username: cachedUsername });
 
+          // Fetch NPCs for start zone with relationship scores for environment panel
+          const startZoneNpcs = await npcService.listByZone(startZone.id);
+          const startNpcsWithRel = await Promise.all(
+            startZoneNpcs.map(async n => {
+              const rel = await npcService.getRelationship(n.id, resolvedPlayerId!);
+              return { name: n.name, disposition: n.disposition, ...(rel ? { relationshipScore: rel.score } : {}) };
+            }),
+          );
+
           socket.emit('world:narration', {
             text: startZone.rawContent,
             zoneSlug: startZone.slug,
             sessionId: session.id,
             timestamp: new Date().toISOString(),
             atmosphereTags: startZone.atmosphereTags,
+            zoneNpcs: startNpcsWithRel,
           });
 
           // Notify others in zone
@@ -287,19 +308,37 @@ export function registerSocketHandlers(
               data: result.nextZone,
             });
           }
+
+          // Record zone traversal edge (undirected) and broadcast if new
+          const newEdge = await vedaService.saveZoneEdge(activeWorldId, fromSlug!, toSlug);
+          if (newEdge) {
+            io.to(`world:${activeWorldId}`).emit('veda:update', {
+              type: 'edge',
+              data: newEdge,
+            });
+          }
         } else {
           await sessionService.updateZone(activeSessionId, result.zone.id);
         }
 
         // Build mentions list from known entity types
+        const npcNames = (result.npcsPresent ?? []).map(n => (typeof n === 'string' ? n : n.name));
         const mentions = _buildMentions(
-          result.npcsPresent ?? [],
+          npcNames,
           result.characterName,
           rishiName,
         );
 
         // Use the final zone (after possible transition)
         const finalZone = result.nextZone ?? result.zone;
+
+        // Build zoneNpcs with relationship scores for the environment panel
+        const zoneNpcsPayload = (result.npcsPresent ?? []).map(n => {
+          const name = typeof n === 'string' ? n : n.name;
+          const disposition = typeof n === 'string' ? 'neutral' : n.disposition;
+          const score = result.npcRelationshipScores?.[name];
+          return { name, disposition, ...(score !== undefined ? { relationshipScore: score } : {}) };
+        });
 
         const narrationPayload = {
           text: result.narration,
@@ -309,6 +348,7 @@ export function registerSocketHandlers(
           ...(result.suggestions && result.suggestions.length > 0 && { suggestions: result.suggestions }),
           ...(mentions.length > 0 && { mentions }),
           ...(finalZone.atmosphereTags?.length && { atmosphereTags: finalZone.atmosphereTags }),
+          ...(zoneNpcsPayload.length > 0 && { zoneNpcs: zoneNpcsPayload }),
         };
 
         // Send narration to everyone in the (possibly new) zone
