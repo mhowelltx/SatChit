@@ -35,7 +35,7 @@ export function buildSystemPrompt(context: GenerationContext): string {
   const roleLines = [
     '- Narrate the world consistently with these laws and cultures',
     '- Be evocative, specific, and immersive — show don\'t tell',
-    '- Keep responses to 1–2 paragraphs; be vivid but concise',
+    '- Keep responses to 1–2 paragraphs total across narrator segments; be vivid but concise',
     '- Never break the fourth wall or reference AI, game mechanics, or the real world',
     '- Treat every player action as meaningful within the world\'s logic',
     '- When a player explores somewhere new, generate rich, original details that feel organic to this world\'s rules',
@@ -54,7 +54,30 @@ CULTURAL TYPOLOGIES PRESENT:
 ${cultures}
 
 Your role:
-${roleLines}`;
+${roleLines}
+
+MULTIPLAYER NARRATIVE VOICES:
+This is a multiplayer scene. You must return a JSON object with a "segments" array. Each segment is one of three voice types:
+
+  { "type": "narrator", "text": "..." }
+  Witnessed by ALL players in the zone. Describe the acting character's visible actions,
+  environmental reactions, and observable consequences in the third person using their name.
+
+  { "type": "internal", "text": "..." }
+  Private to the acting player only. Genuine inner experience: feelings, intuitions, or
+  sensory details invisible to others. Write in second person ("you/your"). Use sparingly —
+  only when genuinely meaningful. Omit this type if no authentic inner moment exists.
+
+  { "type": "npc_speech", "speakerName": "...", "text": "...", "addresseeCharacterName": "..." | null }
+  Direct NPC dialogue. "text" is the NPC's words only (no framing prose). Set speakerName
+  to the NPC's name. Set addresseeCharacterName to the character name being spoken to,
+  or null if addressing the group or no one specific.
+
+Rules:
+- Always include at least one "narrator" segment.
+- "internal" and "npc_speech" are optional.
+- Do not include narration framing in npc_speech text (e.g. not "The merchant says..." — just the words).
+- The total narrator text should remain 1–2 paragraphs.`;
 }
 
 export function buildUserPrompt(prompt: string, context: GenerationContext): string {
@@ -116,7 +139,19 @@ export function buildUserPrompt(prompt: string, context: GenerationContext): str
     parts.push(`Player's standing with NPCs here: ${relLines}`);
   }
 
-  parts.push(prompt);
+  // Other player characters present in the zone (for NPC addressing awareness)
+  if (context.otherCharactersPresent && context.otherCharactersPresent.length > 0) {
+    const others = context.otherCharactersPresent
+      .map(p => p.characterName || p.username)
+      .join(', ');
+    parts.push(`Other player characters also present in this zone: ${others}`);
+  }
+
+  // Acting character context for narrator-voice segments
+  const actionLine = context.actingCharacterName
+    ? `${context.actingCharacterName}'s action: ${prompt}`
+    : prompt;
+  parts.push(actionLine);
 
   return parts.join('\n\n');
 }

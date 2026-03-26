@@ -32,6 +32,10 @@ export interface GenerationContext {
   npcsPresent?: Array<{ name: string; disposition: string; traits: string[]; physicalDescription: string | null }>;
   /** Transient NPCs in zone this session — unnamed/unintroduced characters. */
   transientNPCs?: TransientNPC[];
+  /** Name of the character performing the current action — used for narrator-voice segments. */
+  actingCharacterName?: string;
+  /** Other player characters present in the zone (for NPC addressing context). */
+  otherCharactersPresent?: Array<{ characterName: string; username: string }>;
 }
 
 export interface IAIProvider {
