@@ -3,6 +3,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { World, VedaZone, Character, WorldFeature } from '@satchit/shared';
 import type { IAIProvider } from '../ai/index.js';
 import type { TransientNPC } from '../ai/types.js';
+import type { NarrationSegment } from '@satchit/shared';
 import { AnthropicProvider } from '../ai/providers/anthropic.js';
 import { VedaService } from './VedaService.js';
 import { NPCService } from './NPCService.js';
@@ -36,6 +37,8 @@ interface ActionResult {
   transientNPCsInZone?: TransientNPC[];
   /** rawContent of the new/current zone to display in the environment panel (not chat) */
   zoneDescription?: string;
+  /** Structured voice segments for per-audience delivery */
+  segments: NarrationSegment[];
 }
 
 export class WorldGeneratorService {
@@ -147,6 +150,7 @@ export class WorldGeneratorService {
     sessionActionCount = 0,
     currentMood?: string,
     transientNPCs: TransientNPC[] = [],
+    otherCharactersPresent: Array<{ characterName: string; username: string }> = [],
   ): Promise<ActionResult> {
     // Check Veda cache
     let zone = await this.vedaService.getZone(world.id, currentZoneSlug);
@@ -264,6 +268,8 @@ export class WorldGeneratorService {
       npcMemories,
       npcSocialGraph,
       atmosphereTags: zone?.atmosphereTags,
+      actingCharacterName: characterContext?.name,
+      otherCharactersPresent,
     };
 
     if (isNewZone) {
@@ -301,20 +307,44 @@ export class WorldGeneratorService {
       });
     }
 
-    // Generate narration for the player's specific action
+    // Generate narration for the player's specific action using structured segments
     const characterLine = characterContext
       ? `The player's character is ${characterContext.name}${characterContext.species ? `, a ${characterContext.species}` : ''}${characterContext.traits.length ? ` with traits: ${characterContext.traits.join(', ')}` : ''}.`
       : '';
 
-    const narration = await ai.generate(
-      `The player is in "${zone!.name}" and does the following: "${playerInput}".
+    const narrationContext = { ...context, currentZone: zone, atmosphereTags: zone!.atmosphereTags };
+    const narrationPrompt = `The player is in "${zone!.name}" and does the following: "${playerInput}".
        ${characterLine}
        Narrate what happens, staying true to the world's laws and the zone's established details.
        If the player interacts with an NPC, reflect that NPC's disposition and personality.
        If the player interacts with a known feature (${featuresInZone.map(f => f.name).join(', ') || 'none'}), acknowledge it naturally.
-       IMPORTANT: If the action results in the character arriving somewhere new, write only a brief 1-2 sentence transition message describing the movement. Do NOT describe the new location in detail — a full description will be displayed separately in the UI.`,
-      { ...context, currentZone: zone, atmosphereTags: zone!.atmosphereTags },
-    );
+       IMPORTANT: If the action results in the character arriving somewhere new, write only a brief 1-2 sentence transition message describing the movement. Do NOT describe the new location in detail — a full description will be displayed separately in the UI.`;
+
+    const segmentShape: { segments: NarrationSegment[] } = {
+      segments: [{ type: 'narrator', text: '' }],
+    };
+
+    const structuredResult = await ai.generateStructured<{ segments: NarrationSegment[] }>(
+      narrationPrompt,
+      narrationContext,
+      segmentShape,
+    ).catch(() => null);
+
+    // Build final segments, falling back to a plain narrator segment if structured call failed
+    let segments: NarrationSegment[];
+    if (structuredResult?.segments?.length) {
+      segments = structuredResult.segments;
+    } else {
+      // Fallback: plain generate and wrap as a single narrator segment
+      const plainNarration = await ai.generate(narrationPrompt, narrationContext);
+      segments = [{ type: 'narrator', text: plainNarration }];
+    }
+
+    // Compose the narration text from narrator segments (used for downstream processing + persistence)
+    const narration = segments
+      .filter(s => s.type === 'narrator')
+      .map(s => s.text)
+      .join('\n\n') || segments.map(s => s.text).join('\n\n');
 
     // Best-effort: generate 3-4 suggested follow-up actions
     let suggestions: string[] | undefined;
@@ -444,6 +474,7 @@ export class WorldGeneratorService {
       ...(newFeature ? { newFeature } : {}),
       transientNPCsInZone: updatedTransientNPCs,
       zoneDescription: nextZone?.rawContent ?? (isNewZone ? zone?.rawContent : undefined),
+      segments,
     };
   }
 
@@ -498,12 +529,21 @@ export class WorldGeneratorService {
 
       const rawNpcs: any[] = extracted?.npcs ?? [];
 
-      // Filter out any NPCs whose names clash with existing player characters in this world
+      // Filter out any NPCs whose names clash with existing player characters in this world.
+      // Also tokenise each character name so that first-name-only mentions ("Evara" when
+      // the character is "Evara Lace") are blocked alongside exact full-name matches.
       const worldCharacters = await this.npcService.prismaRef.character.findMany({
         where: { worldId: world.id },
         select: { name: true },
       });
-      const characterNameSet = new Set(worldCharacters.map((c) => c.name.toLowerCase()));
+      const characterNameSet = new Set<string>();
+      for (const c of worldCharacters) {
+        const lower = c.name.toLowerCase();
+        characterNameSet.add(lower);
+        for (const part of lower.split(/\s+/)) {
+          if (part.length > 1) characterNameSet.add(part);
+        }
+      }
       const npcs = rawNpcs.filter((n: any) => n.name && !characterNameSet.has(n.name.toLowerCase()));
 
       for (const npcData of npcs) {

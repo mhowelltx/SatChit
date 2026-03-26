@@ -26,7 +26,7 @@ type AppSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
 interface LogEntry {
   id: string;
-  type: 'narration' | 'input' | 'system' | 'error' | 'veda' | 'action-echo' | 'chat';
+  type: 'narration' | 'narration-internal' | 'input' | 'system' | 'error' | 'veda' | 'action-echo' | 'chat';
   text: string;
   timestamp: string;
   suggestions?: string[];
@@ -248,7 +248,11 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     socket.on('world:narration', (payload: NarrationPayload) => {
       setZoneSlug(payload.zoneSlug);
       zoneSlugRef.current = payload.zoneSlug;
-      sessionId.current = payload.sessionId;
+      // Only update sessionId when the payload carries one (observers receive narration
+      // payloads without a sessionId to avoid clobbering their own session with the actor's).
+      if (payload.sessionId) {
+        sessionId.current = payload.sessionId;
+      }
 
       // Update atmosphere tags and breadcrumb trail when zone changes
       if (payload.atmosphereTags) {
@@ -273,6 +277,19 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
         timestamp: payload.timestamp,
         suggestions: payload.suggestions,
         mentions: payload.mentions,
+      });
+    });
+
+    // Actor-only: internal voice + personalized NPC speech.
+    // Suggestions are anchored here when this event fires, so they appear after
+    // the final log entry rather than on the narrator entry that precedes it.
+    socket.on('world:narration:personal', (payload: NarrationPayload) => {
+      if (!payload.text) return;
+      addLog({
+        type: 'narration-internal',
+        text: payload.text,
+        timestamp: payload.timestamp,
+        suggestions: payload.suggestions,
       });
     });
 
@@ -380,6 +397,7 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
 
   const textColor: Record<LogEntry['type'], string> = {
     narration: 'var(--text)',
+    'narration-internal': 'var(--accent)',
     input: 'var(--accent)',
     system: 'var(--text-muted)',
     error: 'var(--error)',
@@ -388,9 +406,9 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     chat: 'var(--success)',
   };
 
-  // Find the last narration entry index for suggestions display
+  // Find the last narration entry index for suggestions display (includes internal voice)
   const lastNarrationIdx = log.reduce((acc, entry, idx) =>
-    entry.type === 'narration' ? idx : acc, -1);
+    entry.type === 'narration' || entry.type === 'narration-internal' ? idx : acc, -1);
 
   // Mini zone map: radial BFS layout
   const mapLayout = useMemo(() => {
@@ -508,13 +526,20 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
                   marginBottom: '0.75rem',
                   whiteSpace: 'pre-wrap',
                   fontSize: entry.type === 'system' || entry.type === 'veda' ? '0.85rem' : '0.95rem',
+                  ...(entry.type === 'narration-internal' && {
+                    borderLeft: '2px solid var(--accent)',
+                    paddingLeft: '0.65rem',
+                    opacity: 0.88,
+                  }),
                 }}
               >
                 {entry.type === 'narration' ? (
                   <NarrationText text={entry.text} mentions={entry.mentions} />
+                ) : entry.type === 'narration-internal' ? (
+                  <em><NarrationText text={entry.text} mentions={entry.mentions} /></em>
                 ) : entry.type === 'action-echo' ? (
                   <span style={{ fontStyle: 'italic' }}>
-                    [{entry.authorName}] {entry.text}
+                    {entry.text}
                   </span>
                 ) : entry.type === 'chat' ? (
                   <span>

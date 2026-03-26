@@ -233,11 +233,12 @@ export function registerSocketHandlers(
         const world = await prisma.world.findUnique({ where: { id: activeWorldId } });
         if (!world) return;
 
-        // Echo the action to zone-mates immediately (before AI responds)
+        // Echo a brief narrator-framed notification to zone-mates immediately (before AI responds)
+        const echoDisplayName = cachedCharacterName ?? cachedUsername ?? 'Someone';
         socket.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('player:action:echo', {
           playerId: resolvedPlayerId ?? session.playerId,
           username: cachedUsername ?? 'Unknown',
-          input: payload.input,
+          input: `${echoDisplayName} acts...`,
           zoneSlug: activeZoneSlug,
           timestamp: new Date().toISOString(),
         });
@@ -248,6 +249,12 @@ export function registerSocketHandlers(
         sessionActionCount += 1;
 
         const zoneTransientNPCs = transientNPCsByZone.get(activeZoneSlug) ?? [];
+        // Build list of other player characters present in the zone for NPC addressing context
+        const currentPid = resolvedPlayerId ?? session.playerId;
+        const otherCharactersPresent = regPlayers(zoneRoom(activeWorldId, activeZoneSlug))
+          .filter(p => p.playerId !== currentPid)
+          .map(p => ({ characterName: p.characterName ?? p.username, username: p.username }));
+
         const result = await worldGenerator.processAction(
           {
             id: world.id,
@@ -270,6 +277,7 @@ export function registerSocketHandlers(
           sessionActionCount,
           currentMood,
           zoneTransientNPCs,
+          otherCharactersPresent,
         );
 
         // Persist the updated transient NPC list for this zone
@@ -375,20 +383,95 @@ export function registerSocketHandlers(
           }),
         );
 
-        const narrationPayload = {
-          text: result.narration,
+        const basePayload = {
           zoneSlug: finalZone.slug,
-          sessionId: activeSessionId,
+          // NOTE: sessionId deliberately omitted here — it is added per-audience below.
+          // Broadcasting the actor's sessionId to zone-mates causes observers to overwrite
+          // their own sessionId, which breaks their subsequent player:action validation.
           timestamp: new Date().toISOString(),
-          ...(result.suggestions && result.suggestions.length > 0 && { suggestions: result.suggestions }),
           ...(mentions.length > 0 && { mentions }),
           ...(finalZone.atmosphereTags?.length && { atmosphereTags: finalZone.atmosphereTags }),
           ...(zoneNpcsPayload.length > 0 && { zoneNpcs: zoneNpcsPayload }),
           ...(result.zoneDescription && { zoneDescription: result.zoneDescription }),
+          segments: result.segments,
         };
 
-        // Send narration to everyone in the (possibly new) zone
-        io.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('world:narration', narrationPayload);
+        // ── Per-audience narrative routing ───────────────────────────────────────
+        // Split segments into narrator, internal, and npc_speech voices, then
+        // deliver each to the appropriate audience.
+
+        const segments = result.segments;
+        const narratorText = segments
+          .filter(s => s.type === 'narrator')
+          .map(s => s.text)
+          .join('\n\n');
+
+        // NPC speech framed for observers (uses character name: "The Merchant says to Kiran:")
+        const npcSpeechObserver = segments
+          .filter(s => s.type === 'npc_speech')
+          .map(s => {
+            const target = s.addresseeCharacterName ? ` to ${s.addresseeCharacterName}` : '';
+            return `${s.speakerName ?? 'Someone'}${target}: "${s.text}"`;
+          })
+          .join('\n');
+
+        // NPC speech framed for the acting player (uses "you" when addressed directly)
+        const npcSpeechActor = segments
+          .filter(s => s.type === 'npc_speech')
+          .map(s => {
+            const isAddressee = s.addresseeCharacterName &&
+              s.addresseeCharacterName === cachedCharacterName;
+            const target = isAddressee
+              ? ' to you'
+              : s.addresseeCharacterName ? ` to ${s.addresseeCharacterName}` : '';
+            return `${s.speakerName ?? 'Someone'}${target}: "${s.text}"`;
+          })
+          .join('\n');
+
+        const internalText = segments
+          .filter(s => s.type === 'internal')
+          .map(s => s.text)
+          .join('\n\n');
+
+        const observerText = [narratorText, npcSpeechObserver].filter(Boolean).join('\n\n')
+          || result.narration;
+
+        // Determine whether a personal event will follow for the actor.
+        // Suggestions must appear on the actor's LAST log entry, so they are withheld
+        // from the narrator event and placed on the personal event instead when one follows.
+        const personalText = [internalText, npcSpeechActor].filter(Boolean).join('\n\n');
+        const hasPersonalContent = Boolean(personalText);
+        const hasSuggestions = result.suggestions && result.suggestions.length > 0;
+
+        // Zone-mates (not actor): narrator + observer-framed NPC speech + suggestions.
+        // Observers don't receive a personal event, so suggestions go here directly.
+        // No sessionId — observers must not have their own session ID overwritten.
+        socket.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('world:narration', {
+          ...basePayload,
+          text: observerText,
+          ...(hasSuggestions && { suggestions: result.suggestions }),
+        });
+
+        // Actor: narrator only + sessionId.
+        // If a personal event follows, suggestions are withheld here and sent there instead,
+        // so they appear on the final log entry (narration-internal) rather than disappearing.
+        socket.emit('world:narration', {
+          ...basePayload,
+          sessionId: activeSessionId,
+          text: narratorText || result.narration,
+          ...(!hasPersonalContent && hasSuggestions && { suggestions: result.suggestions }),
+        });
+
+        // Actor only: internal voice + actor-framed NPC speech, carrying the suggestions
+        // so they anchor to this final log entry.
+        if (hasPersonalContent) {
+          socket.emit('world:narration:personal', {
+            ...basePayload,
+            sessionId: activeSessionId,
+            text: personalText,
+            ...(hasSuggestions && { suggestions: result.suggestions }),
+          });
+        }
 
         // If the origin zone was newly created, broadcast veda update
         if (result.isNewZone) {

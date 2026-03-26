@@ -1,5 +1,24 @@
 import type { VedaZone, VedaEntity, VedaEvent, VedaLore, WorldFeature, VedaZoneEdge } from './veda.js';
 
+// ── Narration segment voices ──────────────────────────────────────────────────
+
+export type NarrationSegmentType = 'narrator' | 'internal' | 'npc_speech';
+
+/**
+ * A discrete "voice" unit within an AI narration response.
+ * - narrator:   Third-person, visible to all players in the zone.
+ * - internal:   Second-person inner experience, delivered only to the acting player.
+ * - npc_speech: Direct NPC dialogue, framed differently for the addressee vs observers.
+ */
+export interface NarrationSegment {
+  type: NarrationSegmentType;
+  text: string;
+  /** npc_speech only: name of the speaking NPC */
+  speakerName?: string;
+  /** npc_speech only: character name being addressed, or null if addressing the group */
+  addresseeCharacterName?: string | null;
+}
+
 // ── Client → Server ──────────────────────────────────────────────────────────
 
 export interface SessionJoinPayload {
@@ -37,7 +56,8 @@ export interface NameMention {
 export interface NarrationPayload {
   text: string;
   zoneSlug: string;
-  sessionId: string;
+  /** Present only on payloads addressed to the acting player; omitted from zone-wide observer broadcasts. */
+  sessionId?: string;
   timestamp: string;
   /** Suggested player actions generated after this narration */
   suggestions?: string[];
@@ -57,6 +77,8 @@ export interface NarrationPayload {
   }>;
   /** Full rawContent description of the current/destination zone on zone entry/transition */
   zoneDescription?: string;
+  /** Structured voice segments from the AI; present when perspective-split narration is active */
+  segments?: NarrationSegment[];
 }
 
 /** Sent once after session:join with world/character identity and the full discovered zone graph */
@@ -127,6 +149,8 @@ export interface ZoneChatPayload {
 
 export interface ServerToClientEvents {
   'world:narration': (payload: NarrationPayload) => void;
+  /** Actor-only: internal voice (feelings, thoughts) + personalized NPC speech ("to you") */
+  'world:narration:personal': (payload: NarrationPayload) => void;
   'player:moved': (payload: PlayerMovedPayload) => void;
   'player:joined': (payload: PlayerJoinedPayload) => void;
   'player:left': (payload: PlayerLeftPayload) => void;
