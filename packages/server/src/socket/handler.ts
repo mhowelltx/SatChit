@@ -166,12 +166,25 @@ export function registerSocketHandlers(
           // Register self after reading others
           regAdd(room, socket.id, { playerId: resolvedPlayerId, username: cachedUsername });
 
-          // Fetch NPCs for start zone with relationship scores for environment panel
+          // Fetch NPCs for start zone with full detail fields for environment panel
           const startZoneNpcs = await npcService.listByZone(startZone.id);
           const startNpcsWithRel = await Promise.all(
             startZoneNpcs.map(async n => {
               const rel = await npcService.getRelationship(n.id, resolvedPlayerId!);
-              return { name: n.name, disposition: n.disposition, ...(rel ? { relationshipScore: rel.score } : {}) };
+              const knownPlayer = resolvedPlayerId
+                ? (n.knownCharacterIds as string[]).includes(resolvedPlayerId)
+                : false;
+              return {
+                name: n.name,
+                disposition: n.disposition,
+                ...(rel ? { relationshipScore: rel.score } : {}),
+                physicalDescription: n.physicalDescription ?? undefined,
+                knownPlayer,
+                ...(knownPlayer && {
+                  traits: (n.traits as string[]) ?? [],
+                  backstory: n.backstory ?? undefined,
+                }),
+              };
             }),
           );
 
@@ -332,13 +345,29 @@ export function registerSocketHandlers(
         // Use the final zone (after possible transition)
         const finalZone = result.nextZone ?? result.zone;
 
-        // Build zoneNpcs with relationship scores for the environment panel
-        const zoneNpcsPayload = (result.npcsPresent ?? []).map(n => {
-          const name = typeof n === 'string' ? n : n.name;
-          const disposition = typeof n === 'string' ? 'neutral' : n.disposition;
-          const score = result.npcRelationshipScores?.[name];
-          return { name, disposition, ...(score !== undefined ? { relationshipScore: score } : {}) };
-        });
+        // Build enriched zoneNpcs payload (with full NPC detail fields for expand/collapse)
+        const zoneNpcsPayload = await Promise.all(
+          (result.npcsPresent ?? []).map(async (n) => {
+            const name = typeof n === 'string' ? n : n.name;
+            const disposition = typeof n === 'string' ? 'neutral' : n.disposition;
+            const score = result.npcRelationshipScores?.[name];
+            const fullNpc = await npcService.findByName(activeWorldId!, name);
+            const knownPlayer = fullNpc && resolvedPlayerId
+              ? (fullNpc.knownCharacterIds as string[]).includes(resolvedPlayerId)
+              : false;
+            return {
+              name,
+              disposition,
+              ...(score !== undefined && { relationshipScore: score }),
+              physicalDescription: fullNpc?.physicalDescription ?? undefined,
+              knownPlayer,
+              ...(knownPlayer && {
+                traits: (fullNpc?.traits as string[]) ?? [],
+                backstory: fullNpc?.backstory ?? undefined,
+              }),
+            };
+          }),
+        );
 
         const narrationPayload = {
           text: result.narration,
@@ -349,6 +378,7 @@ export function registerSocketHandlers(
           ...(mentions.length > 0 && { mentions }),
           ...(finalZone.atmosphereTags?.length && { atmosphereTags: finalZone.atmosphereTags }),
           ...(zoneNpcsPayload.length > 0 && { zoneNpcs: zoneNpcsPayload }),
+          ...(result.zoneDescription && { zoneDescription: result.zoneDescription }),
         };
 
         // Send narration to everyone in the (possibly new) zone

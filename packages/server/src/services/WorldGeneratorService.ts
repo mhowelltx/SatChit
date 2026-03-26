@@ -34,6 +34,8 @@ interface ActionResult {
   newFeature?: WorldFeature;
   /** Updated list of transient NPCs for the current zone after this action */
   transientNPCsInZone?: TransientNPC[];
+  /** rawContent of the new/current zone to display in the environment panel (not chat) */
+  zoneDescription?: string;
 }
 
 export class WorldGeneratorService {
@@ -295,7 +297,8 @@ export class WorldGeneratorService {
        ${characterLine}
        Narrate what happens, staying true to the world's laws and the zone's established details.
        If the player interacts with an NPC, reflect that NPC's disposition and personality.
-       If the player interacts with a known feature (${featuresInZone.map(f => f.name).join(', ') || 'none'}), acknowledge it naturally.`,
+       If the player interacts with a known feature (${featuresInZone.map(f => f.name).join(', ') || 'none'}), acknowledge it naturally.
+       IMPORTANT: If the action results in the character arriving somewhere new, write only a brief 1-2 sentence transition message describing the movement. Do NOT describe the new location in detail — a full description will be displayed separately in the UI.`,
       { ...context, currentZone: zone, atmosphereTags: zone!.atmosphereTags },
     );
 
@@ -426,6 +429,7 @@ export class WorldGeneratorService {
       nextMood,
       ...(newFeature ? { newFeature } : {}),
       transientNPCsInZone: updatedTransientNPCs,
+      zoneDescription: nextZone?.rawContent ?? (isNewZone ? zone?.rawContent : undefined),
     };
   }
 
@@ -478,7 +482,15 @@ export class WorldGeneratorService {
         npcShape,
       );
 
-      const npcs: any[] = extracted?.npcs ?? [];
+      const rawNpcs: any[] = extracted?.npcs ?? [];
+
+      // Filter out any NPCs whose names clash with existing player characters in this world
+      const worldCharacters = await this.npcService.prismaRef.character.findMany({
+        where: { worldId: world.id },
+        select: { name: true },
+      });
+      const characterNameSet = new Set(worldCharacters.map((c) => c.name.toLowerCase()));
+      const npcs = rawNpcs.filter((n: any) => n.name && !characterNameSet.has(n.name.toLowerCase()));
 
       for (const npcData of npcs) {
         if (!npcData.name) continue;

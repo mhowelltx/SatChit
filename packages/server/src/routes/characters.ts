@@ -16,6 +16,22 @@ export function createCharactersRouter(prisma: PrismaClient): Router {
         return res.status(400).json({ error: 'userId, worldId, and name are required.' });
       }
 
+      // Prevent duplicate names across all characters in this world
+      const existingChar = await prisma.character.findFirst({
+        where: { worldId, name: { equals: name.trim(), mode: 'insensitive' } },
+      });
+      if (existingChar) {
+        return res.status(409).json({ error: 'A character with that name already exists in this world.' });
+      }
+
+      // Prevent names that clash with existing NPCs in this world
+      const existingNpc = await prisma.nPC.findFirst({
+        where: { worldId, name: { equals: name.trim(), mode: 'insensitive' } },
+      });
+      if (existingNpc) {
+        return res.status(409).json({ error: 'That name is already used by an NPC in this world.' });
+      }
+
       const character = await prisma.character.create({
         data: {
           userId,

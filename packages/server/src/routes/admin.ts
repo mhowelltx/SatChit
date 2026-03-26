@@ -14,7 +14,7 @@ function pid(req: Request): string {
 
 // ── Middleware ─────────────────────────────────────────────────────────────────
 
-function requireRishi(prisma: PrismaClient) {
+export function requireRishi(prisma: PrismaClient) {
   return async (req: Request, res: Response, next: NextFunction) => {
     const rishiId = hdr(req, 'x-rishi-id');
     if (!rishiId) return res.status(403).json({ error: 'Rishi access required.' });
