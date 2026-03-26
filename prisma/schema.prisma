@@ -81,6 +81,7 @@ model World {
   items              Item[]
   characterTemplate  WorldCharacterTemplate?
   npcRelationships   NPCRelationship[]
+  features           WorldFeature[]
 
   @@map("worlds")
 }
@@ -119,6 +120,7 @@ model VedaZone {
   entities     VedaEntity[]
   sessions     GameSession[]
   npcsHere     NPC[]
+  features     WorldFeature[]
 
   @@unique([worldId, slug])
   @@map("veda_zones")
@@ -307,6 +309,52 @@ model NPCItem {
   item Item @relation(fields: [itemId], references: [id])
 
   @@map("npc_items")
+}
+
+// ── World Features ────────────────────────────────────────────────────────────
+
+enum FeatureType {
+  MONUMENT
+  BUILDING
+  ALTAR
+  STRUCTURE
+  MARKER
+  OTHER
+}
+
+// A player-built or player-created physical feature in the world
+model WorldFeature {
+  id                 String      @id @default(cuid())
+  worldId            String
+  zoneId             String?
+  name               String
+  description        String
+  featureType        FeatureType @default(OTHER)
+  builtByCharacterId String?
+  builtByPlayerId    String?
+  attributes         Json        @default("{}")
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  world        World               @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  zone         VedaZone?           @relation(fields: [zoneId], references: [id])
+  interactions FeatureInteraction[]
+
+  @@map("world_features")
+}
+
+// Log of player interactions with a world feature
+model FeatureInteraction {
+  id          String   @id @default(cuid())
+  featureId   String
+  playerId    String
+  characterId String?
+  action      String
+  timestamp   DateTime @default(now())
+
+  feature WorldFeature @relation(fields: [featureId], references: [id], onDelete: Cascade)
+
+  @@map("feature_interactions")
 }
 
 // ── Rishi Avatar ──────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import type { VedaZone, VedaEntity, VedaEvent, VedaLore } from './veda.js';
+import type { VedaZone, VedaEntity, VedaEvent, VedaLore, WorldFeature } from './veda.js';
 
 // ── Client → Server ──────────────────────────────────────────────────────────
 
@@ -59,11 +59,11 @@ export interface PlayerLeftPayload {
   username: string;
 }
 
-export type VedaUpdateType = 'zone' | 'entity' | 'event' | 'lore';
+export type VedaUpdateType = 'zone' | 'entity' | 'event' | 'lore' | 'feature';
 
 export interface VedaUpdatePayload {
   type: VedaUpdateType;
-  data: VedaZone | VedaEntity | VedaEvent | VedaLore;
+  data: VedaZone | VedaEntity | VedaEvent | VedaLore | WorldFeature;
 }
 
 export interface ErrorPayload {

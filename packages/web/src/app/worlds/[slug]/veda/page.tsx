@@ -49,6 +49,19 @@ interface NPC {
   updatedAt: string;
 }
 
+interface WorldFeature {
+  id: string;
+  name: string;
+  featureType: string;
+  description: string;
+  builtByPlayerId: string | null;
+  builtByCharacterId: string | null;
+  attributes: Record<string, unknown>;
+  createdAt: string;
+  zone?: { name: string; slug: string } | null;
+  interactions?: Array<{ id: string; playerId: string; action: string; timestamp: string }>;
+}
+
 interface VedaData {
   zones: VedaZone[];
   entities: VedaEntity[];
@@ -64,6 +77,18 @@ async function getVeda(slug: string): Promise<VedaData | null> {
     return res.json() as Promise<VedaData>;
   } catch {
     return null;
+  }
+}
+
+async function getFeatures(slug: string): Promise<WorldFeature[]> {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+  try {
+    const res = await fetch(`${apiUrl}/api/worlds/${slug}/features`, { cache: 'no-store' });
+    if (!res.ok) return [];
+    const data = await res.json() as { features: WorldFeature[] };
+    return data.features;
+  } catch {
+    return [];
   }
 }
 
@@ -114,7 +139,7 @@ const tag: React.CSSProperties = {
 
 export default async function VedaPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const [veda, npcs] = await Promise.all([getVeda(slug), getNPCs(slug)]);
+  const [veda, npcs, features] = await Promise.all([getVeda(slug), getNPCs(slug), getFeatures(slug)]);
 
   if (!veda) {
     return (
@@ -129,6 +154,7 @@ export default async function VedaPage({ params }: { params: Promise<{ slug: str
   const counts = [
     `${zones.length} zone${zones.length !== 1 ? 's' : ''}`,
     `${npcs.length} npc${npcs.length !== 1 ? 's' : ''}`,
+    `${features.length} feature${features.length !== 1 ? 's' : ''}`,
     `${entities.length} entit${entities.length !== 1 ? 'ies' : 'y'}`,
     `${lore.length} lore`,
     `${recentEvents.length} event${recentEvents.length !== 1 ? 's' : ''}`,
@@ -219,6 +245,39 @@ export default async function VedaPage({ params }: { params: Promise<{ slug: str
                 </div>
               </details>
             )}
+          </div>
+        ))}
+      </section>
+
+      {/* Player-Built Features */}
+      <section style={{ marginBottom: '2.5rem' }}>
+        <h3 style={sectionLabel}>Features ({features.length})</h3>
+        {features.length === 0 && <p style={{ color: 'var(--text-muted)' }}>No features built yet.</p>}
+        {features.map((f) => (
+          <div key={f.id} style={card}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
+              <span style={{ color: 'var(--accent)', fontWeight: 'bold' }}>{f.name}</span>
+              <span style={tag}>{f.featureType}</span>
+              {f.zone && <span style={{ ...tag, color: 'var(--text-muted)' }}>{f.zone.name}</span>}
+            </div>
+            <div style={{ color: 'var(--text)', fontSize: '0.9rem', marginBottom: '0.4rem' }}>{f.description}</div>
+            {f.interactions && f.interactions.length > 0 && (
+              <details>
+                <summary style={{ color: 'var(--text-muted)', fontSize: '0.8rem', cursor: 'pointer' }}>
+                  {f.interactions.length} interaction{f.interactions.length !== 1 ? 's' : ''}
+                </summary>
+                <div style={{ marginTop: '0.4rem' }}>
+                  {f.interactions.map((i) => (
+                    <div key={i.id} style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginBottom: '0.2rem' }}>
+                      {i.action} — {new Date(i.timestamp).toLocaleString()}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+            <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.4rem' }}>
+              Built {new Date(f.createdAt).toLocaleString()}
+            </div>
           </div>
         ))}
       </section>

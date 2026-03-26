@@ -1,10 +1,11 @@
 import slugify from 'slugify';
 import type { PrismaClient } from '@prisma/client';
-import type { World, VedaZone, Character } from '@satchit/shared';
+import type { World, VedaZone, Character, WorldFeature } from '@satchit/shared';
 import type { IAIProvider } from '../ai/index.js';
 import { AnthropicProvider } from '../ai/providers/anthropic.js';
 import { VedaService } from './VedaService.js';
 import { NPCService } from './NPCService.js';
+import { WorldFeatureService } from './WorldFeatureService.js';
 
 interface BootstrapResult {
   starterZones: VedaZone[];
@@ -14,7 +15,11 @@ interface BootstrapResult {
 interface ActionResult {
   narration: string;
   zone: VedaZone;
+  /** Destination zone if the narration describes the player arriving somewhere new */
+  nextZone?: VedaZone;
   isNewZone: boolean;
+  /** Whether nextZone was newly created during this action */
+  isNewNextZone?: boolean;
   suggestions?: string[];
   /** Names of NPCs present in the zone during this action */
   npcsPresent?: string[];
@@ -22,11 +27,14 @@ interface ActionResult {
   characterName?: string;
   /** AI-assigned mood extracted from this narration */
   nextMood?: string;
+  /** A player-built feature detected in this narration */
+  newFeature?: WorldFeature;
 }
 
 export class WorldGeneratorService {
   private vedaService: VedaService;
   private npcService: NPCService;
+  private worldFeatureService: WorldFeatureService;
 
   constructor(
     private prisma: PrismaClient,
@@ -34,6 +42,7 @@ export class WorldGeneratorService {
   ) {
     this.vedaService = new VedaService(prisma);
     this.npcService = new NPCService(prisma);
+    this.worldFeatureService = new WorldFeatureService(prisma);
   }
 
   private providerFor(world: World): IAIProvider {
@@ -118,7 +127,8 @@ export class WorldGeneratorService {
 
   /**
    * Process a player action in a given zone.
-   * Includes all enhanced context: environmental fading, tension, mood, relationships.
+   * Includes all enhanced context: environmental fading, tension, mood, relationships,
+   * world features, and automatic zone transition detection.
    */
   async processAction(
     world: World,
@@ -137,6 +147,7 @@ export class WorldGeneratorService {
     const worldLore = await this.vedaService.listLore(world.id);
     const nearbyZones = await this.vedaService.listZones(world.id);
     const npcsInZone = zone ? await this.npcService.listByZone(zone.id) : [];
+    const featuresInZone = zone ? await this.worldFeatureService.findByZone(zone.id) : [];
 
     const ai = this.providerFor(world);
 
@@ -189,6 +200,11 @@ export class WorldGeneratorService {
         disposition: n.disposition,
         traits: n.traits,
         physicalDescription: n.physicalDescription,
+      })),
+      featuresPresent: featuresInZone.map((f) => ({
+        name: f.name,
+        featureType: f.featureType,
+        description: f.description,
       })),
       playerInput,
       zoneMessageCount,
@@ -243,7 +259,8 @@ export class WorldGeneratorService {
       `The player is in "${zone!.name}" and does the following: "${playerInput}".
        ${characterLine}
        Narrate what happens, staying true to the world's laws and the zone's established details.
-       If the player interacts with an NPC, reflect that NPC's disposition and personality.`,
+       If the player interacts with an NPC, reflect that NPC's disposition and personality.
+       If the player interacts with a known feature (${featuresInZone.map(f => f.name).join(', ') || 'none'}), acknowledge it naturally.`,
       { ...context, currentZone: zone, atmosphereTags: zone!.atmosphereTags },
     );
 
@@ -283,8 +300,22 @@ export class WorldGeneratorService {
     // Attempt to extract and persist any new NPCs mentioned in the narration
     await this.extractAndPersistNPCs(world, zone!, narration, ai);
 
+    // Attempt to detect and persist any player-built world features
+    const newFeature = await this.extractAndPersistFeatures(
+      world,
+      zone!,
+      narration,
+      playerId,
+      characterContext?.name ?? null,
+      activeCharacterId(character),
+      ai,
+    );
+
     // Best-effort: update NPC relationships based on interaction
     await this.updateNPCRelationships(world, zone!, npcsInZone, narration, playerId, ai);
+
+    // Best-effort: log interactions with existing features
+    await this.recordFeatureInteractions(zone!, featuresInZone, narration, playerId, activeCharacterId(character));
 
     // Record the event in the Veda
     await this.vedaService.saveEvent({
@@ -293,14 +324,68 @@ export class WorldGeneratorService {
       participantIds: [playerId],
     });
 
+    // Best-effort: detect zone transition from narration
+    let nextZone: VedaZone | undefined;
+    let isNewNextZone = false;
+    try {
+      const transitionResult = await ai.generateStructured(
+        `Does this narration clearly describe the character ARRIVING at or ENTERING a distinctly new named location — not just moving within the current area?
+         Current zone: "${zone!.name}"
+         If yes, provide the destination location name (2-5 words) as newZoneName.
+         If no transition occurred, leave newZoneName as an empty string.
+         Narration: "${narration}"`,
+        { world: context.world },
+        { newZoneName: '' },
+      );
+      const candidateName = transitionResult?.newZoneName;
+      if (candidateName && typeof candidateName === 'string' && candidateName.trim() !== '') {
+        // @ts-ignore: slugify CJS/ESM interop issue with NodeNext
+        const candidateSlug = slugify(candidateName, { lower: true, strict: true });
+        if (candidateSlug && candidateSlug !== zone!.slug) {
+          const existing = await this.vedaService.getZone(world.id, candidateSlug);
+          if (existing) {
+            nextZone = existing;
+          } else {
+            // Generate the new zone
+            const rawContent = await ai.generate(
+              `The player has arrived in "${candidateName}" for the first time.
+               Describe this location in vivid detail — what they see, hear, feel, and sense.
+               Make it feel like a natural part of ${world.name}.${characterContext ? `\nThe player's character is ${characterContext.name}, a ${characterContext.species ?? 'being'}.` : ''}`,
+              context,
+            );
+            const tagsResult = await ai.generateStructured(
+              `Assign 2-4 short atmosphere tags for: "${rawContent}"`,
+              { world: context.world },
+              { tags: ['tag'] },
+            ).catch(() => null);
+            nextZone = await this.vedaService.saveZone({
+              worldId: world.id,
+              name: candidateName,
+              slug: candidateSlug,
+              description: rawContent.split('\n')[0] ?? rawContent.slice(0, 150),
+              rawContent,
+              atmosphereTags: tagsResult?.tags?.slice(0, 4) ?? [],
+              discoveredById: playerId,
+            });
+            isNewNextZone = true;
+          }
+        }
+      }
+    } catch {
+      // Zone transition detection is best-effort
+    }
+
     return {
       narration,
       zone: zone!,
+      nextZone,
       isNewZone,
+      isNewNextZone,
       suggestions,
       npcsPresent: npcsInZone.map((n) => n.name),
       characterName: characterContext?.name,
       nextMood,
+      ...(newFeature ? { newFeature } : {}),
     };
   }
 
@@ -376,6 +461,91 @@ export class WorldGeneratorService {
   }
 
   /**
+   * Ask the AI if the player built or created a permanent world feature.
+   * If detected and not already recorded, persist it and return it.
+   */
+  private async extractAndPersistFeatures(
+    world: World,
+    zone: VedaZone,
+    narration: string,
+    playerId: string,
+    characterName: string | null,
+    characterId: string | null,
+    ai: IAIProvider,
+  ): Promise<WorldFeature | null> {
+    try {
+      const featureShape = {
+        featureCreated: false,
+        name: 'name of the feature',
+        featureType: 'MONUMENT',
+        description: 'brief description of the feature',
+      };
+
+      const extracted = await ai.generateStructured(
+        `Did the player BUILD, CONSTRUCT, ERECT, CARVE, or CREATE a permanent physical feature in this narration?
+         Only set featureCreated to true if the player's action directly resulted in creating something new and tangible that would persist in the world (e.g. a monument, altar, cairn, building, marker, shrine, structure, throne).
+         Do NOT include pre-existing things the player merely discovered or interacted with.
+         If yes, set featureCreated: true and fill in name, featureType, and description.
+         If no, set featureCreated: false.
+         Valid featureType values: MONUMENT, BUILDING, ALTAR, STRUCTURE, MARKER, OTHER
+         Narration: "${narration}"`,
+        { world: { name: world.name, foundationalLaws: world.foundationalLaws ?? [], culturalTypologies: world.culturalTypologies ?? [] } },
+        featureShape,
+      );
+
+      if (!extracted?.featureCreated || !extracted.name) return null;
+      const featureData = extracted;
+
+      // Avoid duplicates
+      const existing = await this.worldFeatureService.findByName(world.id, featureData.name);
+      if (existing) return null;
+
+      const feature = await this.worldFeatureService.create({
+        worldId: world.id,
+        zoneId: zone.id,
+        name: featureData.name,
+        description: featureData.description ?? featureData.name,
+        featureType: featureData.featureType ?? 'OTHER',
+        builtByPlayerId: playerId,
+        builtByCharacterId: characterId ?? undefined,
+      });
+
+      return feature;
+    } catch {
+      // Feature extraction is best-effort
+      return null;
+    }
+  }
+
+  /**
+   * Log interactions with known features in the zone if the narration mentions them.
+   */
+  private async recordFeatureInteractions(
+    zone: VedaZone,
+    featuresInZone: WorldFeature[],
+    narration: string,
+    playerId: string,
+    characterId: string | null,
+  ): Promise<void> {
+    if (featuresInZone.length === 0) return;
+    try {
+      for (const feature of featuresInZone) {
+        // Simple check: feature name mentioned in narration
+        if (narration.toLowerCase().includes(feature.name.toLowerCase())) {
+          await this.worldFeatureService.addInteraction(
+            feature.id,
+            playerId,
+            characterId,
+            `Interacted in ${zone.name}`,
+          );
+        }
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
+  /**
    * Infer relationship changes from the narration and persist them.
    * Uses a lightweight structured call to score the interaction.
    */
@@ -421,4 +591,9 @@ export class WorldGeneratorService {
       // Relationship updates are best-effort
     }
   }
+}
+
+/** Extract character id from a Character object */
+function activeCharacterId(character?: Character | null): string | null {
+  return character?.id ?? null;
 }
