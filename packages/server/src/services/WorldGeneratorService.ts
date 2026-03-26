@@ -529,12 +529,21 @@ export class WorldGeneratorService {
 
       const rawNpcs: any[] = extracted?.npcs ?? [];
 
-      // Filter out any NPCs whose names clash with existing player characters in this world
+      // Filter out any NPCs whose names clash with existing player characters in this world.
+      // Also tokenise each character name so that first-name-only mentions ("Evara" when
+      // the character is "Evara Lace") are blocked alongside exact full-name matches.
       const worldCharacters = await this.npcService.prismaRef.character.findMany({
         where: { worldId: world.id },
         select: { name: true },
       });
-      const characterNameSet = new Set(worldCharacters.map((c) => c.name.toLowerCase()));
+      const characterNameSet = new Set<string>();
+      for (const c of worldCharacters) {
+        const lower = c.name.toLowerCase();
+        characterNameSet.add(lower);
+        for (const part of lower.split(/\s+/)) {
+          if (part.length > 1) characterNameSet.add(part);
+        }
+      }
       const npcs = rawNpcs.filter((n: any) => n.name && !characterNameSet.has(n.name.toLowerCase()));
 
       for (const npcData of npcs) {
