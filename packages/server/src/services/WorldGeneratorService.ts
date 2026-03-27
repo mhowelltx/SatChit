@@ -77,6 +77,27 @@ export class WorldGeneratorService {
   }
 
   /**
+   * The system prompt always instructs the AI to return JSON segments, so even
+   * plain `ai.generate()` calls may return `{"segments":[...]}`. This helper
+   * extracts readable prose from narrator segments when that happens.
+   */
+  private extractPlainText(aiResponse: string): string {
+    try {
+      const parsed = JSON.parse(aiResponse);
+      if (parsed?.segments && Array.isArray(parsed.segments)) {
+        const narratorText = (parsed.segments as Array<{ type: string; text: string }>)
+          .filter(s => s.type === 'narrator')
+          .map(s => s.text)
+          .join('\n\n');
+        return narratorText || (parsed.segments as Array<{ text: string }>).map(s => s.text).join('\n\n');
+      }
+    } catch {
+      // not JSON — return as-is
+    }
+    return aiResponse;
+  }
+
+  /**
    * Bootstrap a newly created world: generate an origin summary and
    * 1–3 starter zones to give players somewhere to begin.
    */
@@ -295,12 +316,12 @@ export class WorldGeneratorService {
         .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
         .join(' ');
 
-      const rawContent = await ai.generate(
+      const rawContent = this.extractPlainText(await ai.generate(
         `The player has arrived in "${zoneName}" for the first time.
          Describe this location in vivid detail — what they see, hear, feel, and sense.
          Make it feel like a natural part of ${world.name}.${characterContext ? `\nThe player's character is ${characterContext.name}, a ${characterContext.species ?? 'being'} — let the description acknowledge their perspective if appropriate.` : ''}`,
         context,
-      );
+      ));
 
       // Generate atmosphere tags for the new zone
       const tagsResult = await ai.generateStructured(
@@ -483,12 +504,12 @@ export class WorldGeneratorService {
             nextZone = existing;
           } else {
             // Generate the new zone
-            const rawContent = await ai.generate(
+            const rawContent = this.extractPlainText(await ai.generate(
               `The player has arrived in "${candidateName}" for the first time.
                Describe this location in vivid detail — what they see, hear, feel, and sense.
                Make it feel like a natural part of ${world.name}.${characterContext ? `\nThe player's character is ${characterContext.name}, a ${characterContext.species ?? 'being'}.` : ''}`,
               context,
-            );
+            ));
             const tagsResult = await ai.generateStructured(
               `Assign 2-4 short atmosphere tags for: "${rawContent}"`,
               { world: context.world },
