@@ -144,6 +144,7 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     knownPlayer?: boolean;
     traits?: string[];
     backstory?: string;
+    isTransient?: boolean;
   }>>([]);
   // NPC expand/collapse state
   const [expandedNpcNames, setExpandedNpcNames] = useState<Set<string>>(new Set());
@@ -837,12 +838,12 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
           {zoneNpcs.map((npc) => {
             const isExpanded = expandedNpcNames.has(npc.name);
             return (
-              <div key={npc.name} style={{ marginBottom: '0.3rem' }}>
+              <div key={npc.name} style={{ marginBottom: '0.3rem', opacity: npc.isTransient ? 0.55 : 1 }}>
                 {/* Header row */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                   <span
                     style={{
-                      color: DISPOSITION_COLORS[npc.disposition] ?? 'var(--text-muted)',
+                      color: npc.isTransient ? 'var(--text-muted)' : (DISPOSITION_COLORS[npc.disposition] ?? 'var(--text-muted)'),
                       fontSize: '0.6rem',
                       flexShrink: 0,
                     }}
@@ -857,8 +858,9 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
                       border: 'none',
                       padding: 0,
                       cursor: 'pointer',
-                      color: 'var(--warning)',
-                      fontWeight: 500,
+                      color: npc.isTransient ? 'var(--text-muted)' : 'var(--warning)',
+                      fontWeight: npc.isTransient ? 400 : 500,
+                      fontStyle: npc.isTransient ? 'italic' : 'normal',
                       fontSize: '0.8rem',
                       textAlign: 'left',
                       flex: 1,
@@ -870,8 +872,8 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
                   >
                     {npc.name}
                   </button>
-                  {/* Expand/collapse toggle */}
-                  <button
+                  {/* Expand/collapse toggle — only for persistent NPCs with details */}
+                  {!npc.isTransient && <button
                     onClick={() => toggleNpcExpand(npc.name)}
                     title={isExpanded ? 'Collapse' : 'Expand'}
                     style={{
@@ -885,7 +887,7 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
                     }}
                   >
                     {isExpanded ? '▲' : '▼'}
-                  </button>
+                  </button>}
                   {/* NPC Relationship Indicator */}
                   {npc.relationshipScore !== undefined && (
                     <span
@@ -907,8 +909,8 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
                   )}
                 </div>
 
-                {/* Expanded detail — knowledge-gated */}
-                {isExpanded && (
+                {/* Expanded detail — knowledge-gated, not shown for unnamed transient figures */}
+                {isExpanded && !npc.isTransient && (
                   <div
                     style={{
                       marginLeft: '1rem',

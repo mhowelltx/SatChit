@@ -65,7 +65,7 @@ export interface NarrationPayload {
   mentions?: NameMention[];
   /** Atmosphere/mood tags for the current zone */
   atmosphereTags?: string[];
-  /** Known NPCs currently in this zone, for the environment panel */
+  /** NPCs currently in this zone, for the environment panel */
   zoneNpcs?: Array<{
     name: string;
     disposition: string;
@@ -74,6 +74,8 @@ export interface NarrationPayload {
     knownPlayer?: boolean;
     traits?: string[];
     backstory?: string;
+    /** True for unnamed/unintroduced figures — rendered in a muted style */
+    isTransient?: boolean;
   }>;
   /** Full rawContent description of the current/destination zone on zone entry/transition */
   zoneDescription?: string;

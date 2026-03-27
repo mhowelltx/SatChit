@@ -409,6 +409,12 @@ export class WorldGeneratorService {
       .map(s => s.text)
       .join('\n\n') || segments.map(s => s.text).join('\n\n');
 
+    // Full text including NPC speech — used for extraction so name reveals inside dialogue are detected
+    const fullNarrationForExtraction = segments.map(s => {
+      if (s.type === 'npc_speech') return `${(s as any).speakerName ?? 'NPC'} says: "${s.text}"`;
+      return s.text;
+    }).join('\n\n');
+
     // Best-effort: generate 3-4 suggested follow-up actions
     let suggestions: string[] | undefined;
     try {
@@ -442,8 +448,10 @@ export class WorldGeneratorService {
       // Mood extraction is best-effort
     }
 
-    // Attempt to extract and persist any new NPCs mentioned in the narration
-    const updatedTransientNPCs = await this.extractAndPersistNPCs(world, zone!, narration, playerId, transientNPCs, ai);
+    // Attempt to extract and persist any new NPCs mentioned in the narration.
+    // Use fullNarrationForExtraction so NPC speech (e.g. "I am Kael") is visible to the
+    // extraction AI — name reveals happen in dialogue, not just in narrator prose.
+    const updatedTransientNPCs = await this.extractAndPersistNPCs(world, zone!, fullNarrationForExtraction, playerId, transientNPCs, ai);
 
     // Attempt to detect and persist any player-built world features
     const newFeature = await this.extractAndPersistFeatures(
