@@ -19,6 +19,7 @@ import type {
   ZoneChatPayload,
   NameMention,
   SessionInfoPayload,
+  KarmaUpdatePayload,
 } from '@satchit/shared';
 import type { VedaZone } from '@satchit/shared';
 
@@ -151,6 +152,19 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
   // Zone region description for collapsible panel section
   const [zoneDescription, setZoneDescription] = useState<string | null>(null);
   const [zoneDescExpanded, setZoneDescExpanded] = useState(false);
+  // Karma score (primary game score, -100 to +100)
+  const [karmaScore, setKarmaScore] = useState<number | null>(null);
+  // World features in the current zone
+  const [zoneFeatures, setZoneFeatures] = useState<Array<{
+    id: string;
+    name: string;
+    featureType: string;
+    description: string;
+    narrative?: string | null;
+    builtByCharacterName?: string | null;
+    interactionTriggers?: string[];
+  }>>([]);
+  const [expandedFeatureIds, setExpandedFeatureIds] = useState<Set<string>>(new Set());
   // Mini zone map state
   const [mapZones, setMapZones] = useState<Array<{ slug: string; name: string }>>([]);
   const [mapEdges, setMapEdges] = useState<Array<{ from: string; to: string }>>([]);
@@ -214,6 +228,14 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     });
   }, []);
 
+  const toggleFeatureExpand = useCallback((id: string) => {
+    setExpandedFeatureIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL ?? 'http://localhost:3001';
     const socket: AppSocket = io(wsUrl);
@@ -241,11 +263,17 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     socket.on('session:info', (payload: SessionInfoPayload) => {
       setWorldName(payload.worldName);
       setCharacterName(payload.characterName);
+      if (payload.karmaScore !== null && payload.karmaScore !== undefined) {
+        setKarmaScore(payload.karmaScore);
+      }
       setMapZones(payload.mapZones);
       setMapEdges(payload.mapEdges);
     });
 
     socket.on('world:narration', (payload: NarrationPayload) => {
+      const prevZoneSlug = zoneSlugRef.current;
+      const zoneChanged = prevZoneSlug != null && prevZoneSlug !== payload.zoneSlug;
+
       setZoneSlug(payload.zoneSlug);
       zoneSlugRef.current = payload.zoneSlug;
       // Only update sessionId when the payload carries one (observers receive narration
@@ -254,16 +282,26 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
         sessionId.current = payload.sessionId;
       }
 
+      // When the zone changes, clear stale environment panel data before applying new values
+      if (zoneChanged) {
+        setZoneNpcs([]);
+        setZoneFeatures([]);
+        setZonePlayers([]);
+      }
+
       // Update atmosphere tags and breadcrumb trail when zone changes
       if (payload.atmosphereTags) {
         setAtmosphereTags(payload.atmosphereTags);
       }
-      if (payload.zoneNpcs) {
+      if (payload.zoneNpcs !== undefined) {
         setZoneNpcs(payload.zoneNpcs);
       }
       if (payload.zoneDescription) {
         setZoneDescription(payload.zoneDescription);
         setZoneDescExpanded(false);
+      }
+      if (payload.zoneFeatures !== undefined) {
+        setZoneFeatures(payload.zoneFeatures);
       }
       setRecentZones((prev) => {
         const next = prev.filter((z) => z !== payload.zoneSlug);
@@ -352,6 +390,10 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
         authorName: payload.username,
         timestamp: payload.timestamp,
       });
+    });
+
+    socket.on('karma:update', (payload: KarmaUpdatePayload) => {
+      setKarmaScore(payload.karmaScore);
     });
 
     socket.on('veda:update', (payload: VedaUpdatePayload) => {
@@ -705,6 +747,35 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
               ◈ {characterName}
             </div>
           )}
+          {karmaScore !== null && (
+            <div style={{ marginTop: '0.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
+                <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', opacity: 0.8 }}>Karma</span>
+                <span style={{
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  color: karmaScore > 0 ? 'var(--success)' : karmaScore < 0 ? 'var(--error)' : 'var(--text-muted)',
+                }}>
+                  {karmaScore > 0 ? `+${karmaScore}` : karmaScore}
+                </span>
+              </div>
+              <div style={{ position: 'relative', width: '100%', height: '5px', background: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
+                <div style={{ position: 'absolute', top: 0, bottom: 0, width: '50%', left: '50%', borderLeft: '1px solid var(--bg)', zIndex: 1 }} />
+                {karmaScore !== 0 && (
+                  <div style={{
+                    position: 'absolute',
+                    top: 0,
+                    bottom: 0,
+                    width: `${Math.abs(karmaScore) / 2}%`,
+                    left: karmaScore > 0 ? '50%' : `${50 - Math.abs(karmaScore) / 2}%`,
+                    background: karmaScore > 0 ? 'var(--success)' : 'var(--error)',
+                    borderRadius: '2px',
+                    opacity: 0.4 + Math.abs(karmaScore) / 100 * 0.6,
+                  }} />
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Region Description (collapsible) ── */}
@@ -908,6 +979,108 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
             </div>
           )}
         </div>
+
+        {/* ── Zone features ── */}
+        {zoneFeatures.length > 0 && (
+          <div>
+            <div
+              style={{
+                color: 'var(--text-muted)',
+                fontSize: '0.7rem',
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                marginBottom: '0.5rem',
+                opacity: 0.6,
+              }}
+            >
+              Features
+            </div>
+            {zoneFeatures.map((feature) => {
+              const isExpanded = expandedFeatureIds.has(feature.id);
+              const featureGlyph: Record<string, string> = {
+                MONUMENT: '◆',
+                BUILDING: '▣',
+                ALTAR: '⛩',
+                STRUCTURE: '◧',
+                MARKER: '◉',
+                OTHER: '◈',
+              };
+              return (
+                <div key={feature.id} style={{ marginBottom: '0.35rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                    <span style={{ color: 'var(--accent)', fontSize: '0.65rem', flexShrink: 0 }}>
+                      {featureGlyph[feature.featureType] ?? '◈'}
+                    </span>
+                    <button
+                      onClick={() => setInput(`examine ${feature.name}`)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: 0,
+                        cursor: 'pointer',
+                        color: 'var(--accent)',
+                        fontWeight: 500,
+                        fontSize: '0.8rem',
+                        textAlign: 'left',
+                        flex: 1,
+                        minWidth: 0,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {feature.name}
+                    </button>
+                    <button
+                      onClick={() => toggleFeatureExpand(feature.id)}
+                      title={isExpanded ? 'Collapse' : 'Expand'}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: 'var(--text-muted)',
+                        fontSize: '0.6rem',
+                        padding: '0 2px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {isExpanded ? '▲' : '▼'}
+                    </button>
+                  </div>
+                  {isExpanded && (
+                    <div
+                      style={{
+                        marginLeft: '1rem',
+                        fontSize: '0.72rem',
+                        color: 'var(--text-muted)',
+                        borderLeft: '1px solid var(--border)',
+                        paddingLeft: '0.5rem',
+                        marginTop: '0.2rem',
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {feature.narrative ? (
+                        <div style={{ marginBottom: '0.25rem' }}>{feature.narrative}</div>
+                      ) : (
+                        <div style={{ marginBottom: '0.25rem', fontStyle: 'italic', opacity: 0.7 }}>{feature.description}</div>
+                      )}
+                      {feature.builtByCharacterName && (
+                        <div style={{ opacity: 0.6, fontSize: '0.68rem' }}>
+                          Built by: <span style={{ color: 'var(--success)' }}>{feature.builtByCharacterName}</span>
+                        </div>
+                      )}
+                      {feature.interactionTriggers && feature.interactionTriggers.length > 0 && (
+                        <div style={{ marginTop: '0.2rem', opacity: 0.55, fontSize: '0.68rem' }}>
+                          Try: {feature.interactionTriggers.map(t => `"${t}"`).join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* ── Zone atmosphere ── */}
         {atmosphereTags.length > 0 && (

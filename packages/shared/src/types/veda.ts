@@ -53,12 +53,15 @@ export interface WorldFeature {
   zoneId: string | null;
   name: string;
   description: string;
+  narrative?: string | null; // Expanded lore description for collapsible panel
   featureType: FeatureType;
   builtByCharacterId: string | null;
+  builtByCharacterName?: string | null; // Denormalized for display
   builtByPlayerId: string | null;
   attributes: Record<string, unknown>;
   createdAt: Date;
   interactions?: FeatureInteraction[];
+  interactionScripts?: FeatureInteractionScript[];
 }
 
 // A log entry of a player interacting with a world feature
@@ -69,6 +72,15 @@ export interface FeatureInteraction {
   characterId: string | null;
   action: string;
   timestamp: Date;
+}
+
+// A predetermined interaction script authored by the creating character
+export interface FeatureInteractionScript {
+  id: string;
+  featureId: string;
+  trigger: string; // Keyword/phrase that activates this script (e.g., "open", "pray at")
+  outcome: string; // The predetermined narrative text delivered when triggered
+  createdAt: Date;
 }
 
 // A traversal edge between two zones — records that a player moved from one to the other

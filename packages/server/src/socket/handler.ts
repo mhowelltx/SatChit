@@ -22,6 +22,7 @@ import { SessionService } from '../services/SessionService.js';
 import { WorldGeneratorService } from '../services/WorldGeneratorService.js';
 import { VedaService } from '../services/VedaService.js';
 import { NPCService } from '../services/NPCService.js';
+import { WorldFeatureService } from '../services/WorldFeatureService.js';
 import slugify from 'slugify';
 
 type AppSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -70,6 +71,7 @@ export function registerSocketHandlers(
   const worldGenerator = new WorldGeneratorService(prisma, ai);
   const vedaService = new VedaService(prisma);
   const npcService = new NPCService(prisma);
+  const worldFeatureService = new WorldFeatureService(prisma);
 
   io.on('connection', (socket: AppSocket) => {
     let activeSessionId: string | null = null;
@@ -143,11 +145,12 @@ export function registerSocketHandlers(
           ? (zones.find(z => z.slug === targetZoneSlug) ?? zones[0])
           : zones[0];
 
-        // Emit session info (world name, character name, full zone map) before narration
+        // Emit session info (world name, character name, karma score, full zone map) before narration
         const allEdges = await vedaService.listZoneEdges(world.id);
         socket.emit('session:info', {
           worldName: world.name,
           characterName: character?.name ?? null,
+          karmaScore: character ? ((character as any).karmaScore ?? 0) : null,
           mapZones: zones.map(z => ({ slug: z.slug, name: z.name })),
           mapEdges: allEdges.map(e => ({ from: e.fromZoneSlug, to: e.toZoneSlug })),
         });
@@ -191,6 +194,18 @@ export function registerSocketHandlers(
             }),
           );
 
+          // Fetch features for start zone
+          const startZoneFeatures = await worldFeatureService.findByZoneWithScripts(startZone.id);
+          const startZoneFeaturesPayload = startZoneFeatures.map(f => ({
+            id: f.id,
+            name: f.name,
+            featureType: f.featureType,
+            description: f.description,
+            narrative: (f as any).narrative ?? null,
+            builtByCharacterName: (f as any).builtByCharacterName ?? null,
+            interactionTriggers: ((f as any).interactionScripts ?? []).map((s: any) => s.trigger),
+          }));
+
           socket.emit('world:narration', {
             text: startZone.rawContent,
             zoneSlug: startZone.slug,
@@ -198,6 +213,8 @@ export function registerSocketHandlers(
             timestamp: new Date().toISOString(),
             atmosphereTags: startZone.atmosphereTags,
             zoneNpcs: startNpcsWithRel,
+            zoneDescription: startZone.rawContent,
+            ...(startZoneFeaturesPayload.length > 0 && { zoneFeatures: startZoneFeaturesPayload }),
           });
 
           // Notify others in zone
@@ -315,9 +332,7 @@ export function registerSocketHandlers(
 
           const newRoom = zoneRoom(activeWorldId, toSlug);
           const newRoomOthers = regPlayers(newRoom).filter(p => p.playerId !== pid);
-          if (newRoomOthers.length > 0) {
-            socket.emit('zone:presence', { zoneSlug: toSlug, players: newRoomOthers });
-          }
+          socket.emit('zone:presence', { zoneSlug: toSlug, players: newRoomOthers });
           regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
 
           await sessionService.updateZone(activeSessionId, result.nextZone.id);
@@ -383,6 +398,11 @@ export function registerSocketHandlers(
           }),
         );
 
+        // Emit karma update to the acting player if karma changed
+        if (result.karmaUpdate) {
+          socket.emit('karma:update', result.karmaUpdate);
+        }
+
         const basePayload = {
           zoneSlug: finalZone.slug,
           // NOTE: sessionId deliberately omitted here — it is added per-audience below.
@@ -391,8 +411,9 @@ export function registerSocketHandlers(
           timestamp: new Date().toISOString(),
           ...(mentions.length > 0 && { mentions }),
           ...(finalZone.atmosphereTags?.length && { atmosphereTags: finalZone.atmosphereTags }),
-          ...(zoneNpcsPayload.length > 0 && { zoneNpcs: zoneNpcsPayload }),
+          zoneNpcs: zoneNpcsPayload,
           ...(result.zoneDescription && { zoneDescription: result.zoneDescription }),
+          zoneFeatures: result.zoneFeatures ?? [],
           segments: result.segments,
         };
 
@@ -557,11 +578,10 @@ export function registerSocketHandlers(
         activeZoneSlug = targetSlug;
         _trackRecentZone(targetSlug);
 
-        // Send presence to the moving player, then register
+        // Send presence to the moving player, then register (always emit even for empty zones
+        // so the client clears stale player entries from the previous zone)
         const newRoomOthers = regPlayers(newRoom).filter(p => p.playerId !== pid);
-        if (newRoomOthers.length > 0) {
-          socket.emit('zone:presence', { zoneSlug: targetSlug, players: newRoomOthers });
-        }
+        socket.emit('zone:presence', { zoneSlug: targetSlug, players: newRoomOthers });
         regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
 
         // Check if zone exists in Veda or generate it
@@ -600,12 +620,50 @@ export function registerSocketHandlers(
 
         await sessionService.updateZone(activeSessionId, zone.id);
 
+        const moveZoneFeatures = await worldFeatureService.findByZoneWithScripts(zone.id).catch(() => []);
+        const moveZoneFeaturesPayload = moveZoneFeatures.map(f => ({
+          id: f.id,
+          name: f.name,
+          featureType: f.featureType,
+          description: f.description,
+          narrative: (f as any).narrative ?? null,
+          builtByCharacterName: (f as any).builtByCharacterName ?? null,
+          interactionTriggers: ((f as any).interactionScripts ?? []).map((s: any) => s.trigger),
+        }));
+
+        // Fetch NPCs for the destination zone so the environment panel updates correctly
+        const moveZoneNpcs = await npcService.listByZone(zone.id).catch(() => []);
+        const moveZoneNpcsPayload = await Promise.all(
+          moveZoneNpcs.map(async n => {
+            const rel = resolvedPlayerId
+              ? await npcService.getRelationship(n.id, resolvedPlayerId).catch(() => null)
+              : null;
+            const knownPlayer = resolvedPlayerId
+              ? (n.knownCharacterIds as string[]).includes(resolvedPlayerId)
+              : false;
+            return {
+              name: n.name,
+              disposition: n.disposition,
+              ...(rel ? { relationshipScore: rel.score } : {}),
+              physicalDescription: n.physicalDescription ?? undefined,
+              knownPlayer,
+              ...(knownPlayer && {
+                traits: (n.traits as string[]) ?? [],
+                backstory: n.backstory ?? undefined,
+              }),
+            };
+          }),
+        );
+
         socket.emit('world:narration', {
           text: zone.rawContent,
           zoneSlug: zone.slug,
           sessionId: activeSessionId,
           timestamp: new Date().toISOString(),
           atmosphereTags: zone.atmosphereTags,
+          zoneNpcs: moveZoneNpcsPayload,
+          zoneDescription: zone.rawContent,
+          zoneFeatures: moveZoneFeaturesPayload,
         });
 
         // Notify others in new zone

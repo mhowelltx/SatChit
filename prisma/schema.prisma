@@ -205,6 +205,7 @@ model Character {
   backstory           String?
   stats               Json     @default("{}") // health, mana, xp, etc.
   customAttributes    Json     @default("{}") // world-specific fields from WorldCharacterTemplate
+  karmaScore          Int      @default(0)   // -100 (lawless) to +100 (saintly); primary game score
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
@@ -328,23 +329,39 @@ enum FeatureType {
 
 // A player-built or player-created physical feature in the world
 model WorldFeature {
-  id                 String      @id @default(cuid())
-  worldId            String
-  zoneId             String?
-  name               String
-  description        String
-  featureType        FeatureType @default(OTHER)
-  builtByCharacterId String?
-  builtByPlayerId    String?
-  attributes         Json        @default("{}")
-  createdAt          DateTime    @default(now())
-  updatedAt          DateTime    @updatedAt
+  id                   String      @id @default(cuid())
+  worldId              String
+  zoneId               String?
+  name                 String
+  description          String
+  narrative            String?     // Expanded lore description shown in collapsible panel
+  featureType          FeatureType @default(OTHER)
+  builtByCharacterId   String?
+  builtByCharacterName String?     // Denormalized name for display without join
+  builtByPlayerId      String?
+  attributes           Json        @default("{}")
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
 
-  world        World               @relation(fields: [worldId], references: [id], onDelete: Cascade)
-  zone         VedaZone?           @relation(fields: [zoneId], references: [id])
-  interactions FeatureInteraction[]
+  world              World                     @relation(fields: [worldId], references: [id], onDelete: Cascade)
+  zone               VedaZone?                 @relation(fields: [zoneId], references: [id])
+  interactions       FeatureInteraction[]
+  interactionScripts FeatureInteractionScript[]
 
   @@map("world_features")
+}
+
+// A predetermined interaction script for a world feature (authored by the creating character)
+model FeatureInteractionScript {
+  id        String   @id @default(cuid())
+  featureId String
+  trigger   String   // Keyword/phrase that activates this script (e.g., "open", "pray at")
+  outcome   String   // The predetermined narrative text delivered when triggered
+  createdAt DateTime @default(now())
+
+  feature WorldFeature @relation(fields: [featureId], references: [id], onDelete: Cascade)
+
+  @@map("feature_interaction_scripts")
 }
 
 // Log of player interactions with a world feature
