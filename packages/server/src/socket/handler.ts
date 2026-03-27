@@ -374,29 +374,40 @@ export function registerSocketHandlers(
         // Use the final zone (after possible transition)
         const finalZone = result.nextZone ?? result.zone;
 
-        // Build enriched zoneNpcs payload (with full NPC detail fields for expand/collapse)
-        const zoneNpcsPayload = await Promise.all(
-          (result.npcsPresent ?? []).map(async (n) => {
-            const name = typeof n === 'string' ? n : n.name;
-            const disposition = typeof n === 'string' ? 'neutral' : n.disposition;
-            const score = result.npcRelationshipScores?.[name];
-            const fullNpc = await npcService.findByName(activeWorldId!, name);
-            const knownPlayer = fullNpc && resolvedPlayerId
-              ? (fullNpc.knownCharacterIds as string[]).includes(resolvedPlayerId)
+        // Build enriched zoneNpcs payload from a fresh post-action DB query so any NPCs
+        // just created by extraction (e.g. a named NPC who introduced themselves) are included.
+        const freshZoneNpcs = await npcService.listByZone(finalZone.id);
+        const persistedNpcsPayload = await Promise.all(
+          freshZoneNpcs.map(async (n) => {
+            const score = result.npcRelationshipScores?.[n.name];
+            const knownPlayer = resolvedPlayerId
+              ? (n.knownCharacterIds as string[]).includes(resolvedPlayerId)
               : false;
             return {
-              name,
-              disposition,
+              name: n.name,
+              disposition: n.disposition as string,
               ...(score !== undefined && { relationshipScore: score }),
-              physicalDescription: fullNpc?.physicalDescription ?? undefined,
+              physicalDescription: n.physicalDescription ?? undefined,
               knownPlayer,
               ...(knownPlayer && {
-                traits: (fullNpc?.traits as string[]) ?? [],
-                backstory: fullNpc?.backstory ?? undefined,
+                traits: (n.traits as string[]) ?? [],
+                backstory: n.backstory ?? undefined,
               }),
             };
           }),
         );
+        // Merge in transient NPCs (unnamed figures like "the hooded stranger") not yet in DB
+        const transientForZone = transientNPCsByZone.get(activeZoneSlug) ?? [];
+        const persistedNames = new Set(persistedNpcsPayload.map(n => n.name.toLowerCase()));
+        const transientNpcsPayload = transientForZone
+          .filter(t => !persistedNames.has(t.role.toLowerCase()))
+          .map(t => ({
+            name: t.role,
+            disposition: (t.disposition ?? 'neutral') as string,
+            knownPlayer: false,
+            isTransient: true,
+          }));
+        const zoneNpcsPayload = [...persistedNpcsPayload, ...transientNpcsPayload];
 
         // Emit karma update to the acting player if karma changed
         if (result.karmaUpdate) {
