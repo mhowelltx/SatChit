@@ -332,9 +332,7 @@ export function registerSocketHandlers(
 
           const newRoom = zoneRoom(activeWorldId, toSlug);
           const newRoomOthers = regPlayers(newRoom).filter(p => p.playerId !== pid);
-          if (newRoomOthers.length > 0) {
-            socket.emit('zone:presence', { zoneSlug: toSlug, players: newRoomOthers });
-          }
+          socket.emit('zone:presence', { zoneSlug: toSlug, players: newRoomOthers });
           regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
 
           await sessionService.updateZone(activeSessionId, result.nextZone.id);
@@ -413,9 +411,9 @@ export function registerSocketHandlers(
           timestamp: new Date().toISOString(),
           ...(mentions.length > 0 && { mentions }),
           ...(finalZone.atmosphereTags?.length && { atmosphereTags: finalZone.atmosphereTags }),
-          ...(zoneNpcsPayload.length > 0 && { zoneNpcs: zoneNpcsPayload }),
+          zoneNpcs: zoneNpcsPayload,
           ...(result.zoneDescription && { zoneDescription: result.zoneDescription }),
-          ...(result.zoneFeatures && result.zoneFeatures.length > 0 && { zoneFeatures: result.zoneFeatures }),
+          zoneFeatures: result.zoneFeatures ?? [],
           segments: result.segments,
         };
 
@@ -580,11 +578,10 @@ export function registerSocketHandlers(
         activeZoneSlug = targetSlug;
         _trackRecentZone(targetSlug);
 
-        // Send presence to the moving player, then register
+        // Send presence to the moving player, then register (always emit even for empty zones
+        // so the client clears stale player entries from the previous zone)
         const newRoomOthers = regPlayers(newRoom).filter(p => p.playerId !== pid);
-        if (newRoomOthers.length > 0) {
-          socket.emit('zone:presence', { zoneSlug: targetSlug, players: newRoomOthers });
-        }
+        socket.emit('zone:presence', { zoneSlug: targetSlug, players: newRoomOthers });
         regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
 
         // Check if zone exists in Veda or generate it
@@ -633,14 +630,40 @@ export function registerSocketHandlers(
           builtByCharacterName: (f as any).builtByCharacterName ?? null,
           interactionTriggers: ((f as any).interactionScripts ?? []).map((s: any) => s.trigger),
         }));
+
+        // Fetch NPCs for the destination zone so the environment panel updates correctly
+        const moveZoneNpcs = await npcService.listByZone(zone.id).catch(() => []);
+        const moveZoneNpcsPayload = await Promise.all(
+          moveZoneNpcs.map(async n => {
+            const rel = resolvedPlayerId
+              ? await npcService.getRelationship(n.id, resolvedPlayerId).catch(() => null)
+              : null;
+            const knownPlayer = resolvedPlayerId
+              ? (n.knownCharacterIds as string[]).includes(resolvedPlayerId)
+              : false;
+            return {
+              name: n.name,
+              disposition: n.disposition,
+              ...(rel ? { relationshipScore: rel.score } : {}),
+              physicalDescription: n.physicalDescription ?? undefined,
+              knownPlayer,
+              ...(knownPlayer && {
+                traits: (n.traits as string[]) ?? [],
+                backstory: n.backstory ?? undefined,
+              }),
+            };
+          }),
+        );
+
         socket.emit('world:narration', {
           text: zone.rawContent,
           zoneSlug: zone.slug,
           sessionId: activeSessionId,
           timestamp: new Date().toISOString(),
           atmosphereTags: zone.atmosphereTags,
+          zoneNpcs: moveZoneNpcsPayload,
           zoneDescription: zone.rawContent,
-          ...(moveZoneFeaturesPayload.length > 0 && { zoneFeatures: moveZoneFeaturesPayload }),
+          zoneFeatures: moveZoneFeaturesPayload,
         });
 
         // Notify others in new zone
