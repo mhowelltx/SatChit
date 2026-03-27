@@ -366,9 +366,20 @@ export class WorldGeneratorService {
     if (structuredResult?.segments?.length) {
       segments = structuredResult.segments;
     } else {
-      // Fallback: plain generate and wrap as a single narrator segment
+      // Fallback: plain generate and wrap as a single narrator segment.
+      // The AI occasionally returns a JSON segments object instead of plain text —
+      // detect and parse it so the raw JSON isn't displayed to players.
       const plainNarration = await ai.generate(narrationPrompt, narrationContext);
-      segments = [{ type: 'narrator', text: plainNarration }];
+      try {
+        const parsed = JSON.parse(plainNarration);
+        if (parsed?.segments && Array.isArray(parsed.segments) && parsed.segments.length > 0) {
+          segments = parsed.segments as NarrationSegment[];
+        } else {
+          segments = [{ type: 'narrator', text: plainNarration }];
+        }
+      } catch {
+        segments = [{ type: 'narrator', text: plainNarration }];
+      }
     }
 
     // Compose the narration text from narrator segments (used for downstream processing + persistence)

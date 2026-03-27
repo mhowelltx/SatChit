@@ -271,6 +271,9 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     });
 
     socket.on('world:narration', (payload: NarrationPayload) => {
+      const prevZoneSlug = zoneSlugRef.current;
+      const zoneChanged = prevZoneSlug != null && prevZoneSlug !== payload.zoneSlug;
+
       setZoneSlug(payload.zoneSlug);
       zoneSlugRef.current = payload.zoneSlug;
       // Only update sessionId when the payload carries one (observers receive narration
@@ -279,11 +282,18 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
         sessionId.current = payload.sessionId;
       }
 
+      // When the zone changes, clear stale environment panel data before applying new values
+      if (zoneChanged) {
+        setZoneNpcs([]);
+        setZoneFeatures([]);
+        setZonePlayers([]);
+      }
+
       // Update atmosphere tags and breadcrumb trail when zone changes
       if (payload.atmosphereTags) {
         setAtmosphereTags(payload.atmosphereTags);
       }
-      if (payload.zoneNpcs) {
+      if (payload.zoneNpcs !== undefined) {
         setZoneNpcs(payload.zoneNpcs);
       }
       if (payload.zoneDescription) {
