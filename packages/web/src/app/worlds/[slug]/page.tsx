@@ -45,28 +45,6 @@ export default async function WorldDetailPage({ params }: { params: Promise<{ sl
       <h1 style={{ color: 'var(--accent)', marginTop: '1rem' }}>{world.name}</h1>
       <p style={{ color: 'var(--text-muted)', marginBottom: '2rem' }}>{world.description}</p>
 
-      <section style={{ marginBottom: '2rem' }}>
-        <h3 style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0 0 0.75rem' }}>
-          Foundational Laws
-        </h3>
-        <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-          {world.foundationalLaws.map((law, i) => (
-            <li key={i} style={{ marginBottom: '0.4rem', color: 'var(--text)' }}>{law}</li>
-          ))}
-        </ul>
-      </section>
-
-      <section style={{ marginBottom: '2.5rem' }}>
-        <h3 style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.1em', margin: '0 0 0.75rem' }}>
-          Cultural Typologies
-        </h3>
-        <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
-          {world.culturalTypologies.map((culture, i) => (
-            <li key={i} style={{ marginBottom: '0.4rem', color: 'var(--text)' }}>{culture}</li>
-          ))}
-        </ul>
-      </section>
-
       <Link
         href={`/worlds/${world.slug}/characters`}
         style={{

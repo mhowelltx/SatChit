@@ -1,6 +1,6 @@
 import slugify from 'slugify';
 import type { PrismaClient } from '@prisma/client';
-import type { World, VedaZone, Character, WorldFeature } from '@satchit/shared';
+import type { World, VedaZone, Character, WorldFeature, FeatureType } from '@satchit/shared';
 import type { IAIProvider } from '../ai/index.js';
 import type { TransientNPC } from '../ai/types.js';
 import type { NarrationSegment } from '@satchit/shared';
@@ -12,6 +12,16 @@ import { WorldFeatureService } from './WorldFeatureService.js';
 interface BootstrapResult {
   starterZones: VedaZone[];
   originSummary: string;
+}
+
+interface ZoneFeatureEntry {
+  id: string;
+  name: string;
+  featureType: FeatureType;
+  description: string;
+  narrative?: string | null;
+  builtByCharacterName?: string | null;
+  interactionTriggers?: string[];
 }
 
 interface ActionResult {
@@ -39,6 +49,10 @@ interface ActionResult {
   zoneDescription?: string;
   /** Structured voice segments for per-audience delivery */
   segments: NarrationSegment[];
+  /** Features present in the final zone, for the environment panel */
+  zoneFeatures?: ZoneFeatureEntry[];
+  /** Karma update for the acting character (if any) */
+  karmaUpdate?: { characterId: string; karmaScore: number; delta: number; reason: string };
 }
 
 export class WorldGeneratorService {
@@ -173,7 +187,7 @@ export class WorldGeneratorService {
       .slice(0, 8)
       .map(z => ({ ...z, rawContent: '' }));
     const npcsInZone = zone ? await this.npcService.listByZone(zone.id) : [];
-    const featuresInZone = zone ? await this.worldFeatureService.findByZone(zone.id) : [];
+    const featuresInZone = zone ? await this.worldFeatureService.findByZoneWithScripts(zone.id) : [];
 
     const ai = this.providerFor(world);
 
@@ -258,6 +272,7 @@ export class WorldGeneratorService {
         name: f.name,
         featureType: f.featureType,
         description: f.description,
+        interactionTriggers: (f.interactionScripts ?? []).map((s: any) => s.trigger),
       })),
       playerInput,
       zoneMessageCount,
@@ -312,12 +327,28 @@ export class WorldGeneratorService {
       ? `The player's character is ${characterContext.name}${characterContext.species ? `, a ${characterContext.species}` : ''}${characterContext.traits.length ? ` with traits: ${characterContext.traits.join(', ')}` : ''}.`
       : '';
 
+    // Check if player's action matches any feature interaction script trigger
+    const inputLower = playerInput.toLowerCase();
+    let scriptedOutcome: string | null = null;
+    for (const feature of featuresInZone) {
+      for (const script of (feature.interactionScripts ?? []) as any[]) {
+        if (inputLower.includes(script.trigger.toLowerCase())) {
+          scriptedOutcome = script.outcome;
+          break;
+        }
+      }
+      if (scriptedOutcome) break;
+    }
+
     const narrationContext = { ...context, currentZone: zone, atmosphereTags: zone!.atmosphereTags };
+    const scriptedOutcomeLine = scriptedOutcome
+      ? `\nIMPORTANT: This action triggers a predetermined interaction. Incorporate this exact outcome into your narration: "${scriptedOutcome}"`
+      : '';
     const narrationPrompt = `The player is in "${zone!.name}" and does the following: "${playerInput}".
        ${characterLine}
        Narrate what happens, staying true to the world's laws and the zone's established details.
        If the player interacts with an NPC, reflect that NPC's disposition and personality.
-       If the player interacts with a known feature (${featuresInZone.map(f => f.name).join(', ') || 'none'}), acknowledge it naturally.
+       If the player interacts with a known feature (${featuresInZone.map(f => f.name).join(', ') || 'none'}), acknowledge it naturally.${scriptedOutcomeLine}
        IMPORTANT: If the action results in the character arriving somewhere new, write only a brief 1-2 sentence transition message describing the movement. Do NOT describe the new location in detail — a full description will be displayed separately in the UI.`;
 
     const segmentShape: { segments: NarrationSegment[] } = {
@@ -402,6 +433,15 @@ export class WorldGeneratorService {
     // Best-effort: log interactions with existing features
     await this.recordFeatureInteractions(zone!, featuresInZone, narration, playerId, activeCharacterId(character));
 
+    // Best-effort: evaluate karma impact of this action
+    let karmaUpdate: ActionResult['karmaUpdate'];
+    if (character) {
+      const karma = await this.evaluateKarma(world, playerInput, narration, character as Character & { karmaScore: number }, ai);
+      if (karma) {
+        karmaUpdate = { characterId: character.id, ...karma };
+      }
+    }
+
     // Record the event in the Veda
     await this.vedaService.saveEvent({
       worldId: world.id,
@@ -460,6 +500,19 @@ export class WorldGeneratorService {
       // Zone transition detection is best-effort
     }
 
+    // Fetch zone features for the final zone (post-transition if applicable) for environment panel
+    const finalZoneForFeatures = nextZone ?? zone!;
+    const finalZoneFeatures = await this.worldFeatureService.findByZoneWithScripts(finalZoneForFeatures.id).catch(() => []);
+    const zoneFeaturesPayload: ZoneFeatureEntry[] = finalZoneFeatures.map((f) => ({
+      id: f.id,
+      name: f.name,
+      featureType: f.featureType as FeatureType,
+      description: f.description,
+      narrative: f.narrative ?? null,
+      builtByCharacterName: (f as any).builtByCharacterName ?? null,
+      interactionTriggers: ((f as any).interactionScripts ?? []).map((s: any) => s.trigger),
+    }));
+
     return {
       narration,
       zone: zone!,
@@ -475,6 +528,8 @@ export class WorldGeneratorService {
       transientNPCsInZone: updatedTransientNPCs,
       zoneDescription: nextZone?.rawContent ?? (isNewZone ? zone?.rawContent : undefined),
       segments,
+      zoneFeatures: zoneFeaturesPayload,
+      ...(karmaUpdate ? { karmaUpdate } : {}),
     };
   }
 
@@ -619,13 +674,14 @@ export class WorldGeneratorService {
         name: 'name of the feature',
         featureType: 'MONUMENT',
         description: 'brief description of the feature',
+        narrative: 'expanded lore narrative about this feature (2-3 sentences)',
       };
 
       const extracted = await ai.generateStructured(
         `Did the player BUILD, CONSTRUCT, ERECT, CARVE, or CREATE a permanent physical feature in this narration?
          Only set featureCreated to true if the player's action directly resulted in creating something new and tangible that would persist in the world (e.g. a monument, altar, cairn, building, marker, shrine, structure, throne).
          Do NOT include pre-existing things the player merely discovered or interacted with.
-         If yes, set featureCreated: true and fill in name, featureType, and description.
+         If yes, set featureCreated: true and fill in name, featureType, description, and narrative (expanded lore about this feature).
          If no, set featureCreated: false.
          Valid featureType values: MONUMENT, BUILDING, ALTAR, STRUCTURE, MARKER, OTHER
          Narration: "${narration}"`,
@@ -645,10 +701,34 @@ export class WorldGeneratorService {
         zoneId: zone.id,
         name: featureData.name,
         description: featureData.description ?? featureData.name,
+        narrative: (featureData as any).narrative ?? undefined,
         featureType: featureData.featureType ?? 'OTHER',
         builtByPlayerId: playerId,
         builtByCharacterId: characterId ?? undefined,
+        builtByCharacterName: characterName ?? undefined,
       });
+
+      // Extract interaction scripts for the new feature (best-effort)
+      try {
+        const scriptShape = {
+          scripts: [{ trigger: 'open', outcome: 'The lid creaks open revealing glittering coins.' }],
+        };
+        const scriptResult = await ai.generateStructured(
+          `A character just created: "${featureData.name}" — ${featureData.description}.
+           Based on the world's laws and the feature's nature, propose 1-3 natural ways a future player might interact with it.
+           For each, provide a "trigger" (1-3 word verb phrase like "open", "pray at", "touch", "examine") and an "outcome" (1-3 sentence narrative that plays when triggered).
+           Keep outcomes grounded in this world's tone and laws.`,
+          { world: { name: world.name, foundationalLaws: world.foundationalLaws ?? [], culturalTypologies: world.culturalTypologies ?? [] } },
+          scriptShape,
+        );
+        for (const s of scriptResult?.scripts ?? []) {
+          if (s.trigger && s.outcome) {
+            await this.worldFeatureService.addInteractionScript(feature.id, s.trigger, s.outcome);
+          }
+        }
+      } catch {
+        // Script extraction is best-effort
+      }
 
       return feature;
     } catch {
@@ -737,6 +817,45 @@ export class WorldGeneratorService {
       }
     } catch {
       // Relationship updates are best-effort
+    }
+  }
+
+  /**
+   * Evaluate the karma impact of a player's action against world laws.
+   * Returns the new karma state if the score changed, or null if neutral/failed.
+   */
+  private async evaluateKarma(
+    world: World,
+    playerInput: string,
+    narration: string,
+    character: Character & { karmaScore: number },
+    ai: IAIProvider,
+  ): Promise<{ karmaScore: number; delta: number; reason: string } | null> {
+    try {
+      const karmaShape = { delta: 0, reason: '' };
+      const result = await ai.generateStructured(
+        `The world "${world.name}" has these foundational laws: ${world.foundationalLaws.join('; ')}.
+         A character performed this action: "${playerInput}"
+         The outcome was: "${narration.slice(0, 300)}"
+         Evaluate whether this action aligned with (+) or violated (-) the world's laws.
+         Return delta between -10 and +10 (0 = neutral/irrelevant). Return a one-sentence reason.`,
+        { world: { name: world.name, foundationalLaws: world.foundationalLaws, culturalTypologies: world.culturalTypologies } },
+        karmaShape,
+      );
+
+      if (!result || typeof result.delta !== 'number') return null;
+      const delta = Math.max(-10, Math.min(10, Math.round(result.delta)));
+      if (delta === 0) return null;
+
+      const newKarma = Math.max(-100, Math.min(100, character.karmaScore + delta));
+      await this.prisma.character.update({
+        where: { id: character.id },
+        data: { karmaScore: newKarma },
+      });
+
+      return { karmaScore: newKarma, delta, reason: (result.reason as string) ?? '' };
+    } catch {
+      return null;
     }
   }
 
