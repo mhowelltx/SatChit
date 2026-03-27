@@ -1,4 +1,4 @@
-import type { VedaZone, VedaEntity, VedaEvent, VedaLore, WorldFeature, VedaZoneEdge } from './veda.js';
+import type { VedaZone, VedaEntity, VedaEvent, VedaLore, WorldFeature, VedaZoneEdge, FeatureType } from './veda.js';
 
 // ── Narration segment voices ──────────────────────────────────────────────────
 
@@ -77,6 +77,16 @@ export interface NarrationPayload {
   }>;
   /** Full rawContent description of the current/destination zone on zone entry/transition */
   zoneDescription?: string;
+  /** World features present in the current zone, for the environment panel */
+  zoneFeatures?: Array<{
+    id: string;
+    name: string;
+    featureType: FeatureType;
+    description: string;
+    narrative?: string | null;
+    builtByCharacterName?: string | null;
+    interactionTriggers?: string[]; // trigger keywords only (not outcomes)
+  }>;
   /** Structured voice segments from the AI; present when perspective-split narration is active */
   segments?: NarrationSegment[];
 }
@@ -85,6 +95,7 @@ export interface NarrationPayload {
 export interface SessionInfoPayload {
   worldName: string;
   characterName: string | null;
+  karmaScore: number | null; // null when no character is embodied
   mapZones: Array<{ slug: string; name: string }>;
   mapEdges: Array<{ from: string; to: string }>;
 }
@@ -147,6 +158,13 @@ export interface ZoneChatPayload {
 
 // ── Typed event maps (for socket.io generics) ─────────────────────────────────
 
+export interface KarmaUpdatePayload {
+  characterId: string;
+  karmaScore: number; // new clamped score
+  delta: number;      // change applied this action
+  reason: string;     // one-sentence explanation
+}
+
 export interface ServerToClientEvents {
   'world:narration': (payload: NarrationPayload) => void;
   /** Actor-only: internal voice (feelings, thoughts) + personalized NPC speech ("to you") */
@@ -160,6 +178,8 @@ export interface ServerToClientEvents {
   'zone:presence': (payload: ZonePresencePayload) => void;
   'player:action:echo': (payload: PlayerActionEchoPayload) => void;
   'zone:chat': (payload: ZoneChatPayload) => void;
+  /** Actor-only: karma score update after an action is evaluated against world laws */
+  'karma:update': (payload: KarmaUpdatePayload) => void;
 }
 
 export interface ClientToServerEvents {

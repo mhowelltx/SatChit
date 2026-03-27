@@ -14,6 +14,7 @@ export interface Character {
   backstory: string | null;
   stats: Record<string, unknown>;        // health, mana, xp, etc.
   customAttributes: Record<string, unknown>; // world-specific fields from WorldCharacterTemplate
+  karmaScore: number; // -100 (lawless) to +100 (saintly); primary game score
   createdAt: Date;
   updatedAt: Date;
 }
