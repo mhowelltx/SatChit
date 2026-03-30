@@ -199,7 +199,12 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
         });
       } else {
         // Player action — triggers AI narration
-        addLog({ type: 'input', text: `> ${trimmed}`, timestamp: new Date().toISOString() });
+        const echoPrefix = mention?.type === 'npc'
+          ? `[→ ${mention.name}] `
+          : mention?.type === 'feature'
+          ? `[@ ${mention.name}] `
+          : '';
+        addLog({ type: 'input', text: `> ${echoPrefix}${trimmed}`, timestamp: new Date().toISOString() });
         socketRef.current.emit('player:action', {
           sessionId: sessionId.current,
           input: trimmed,

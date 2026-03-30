@@ -252,12 +252,19 @@ export function registerSocketHandlers(
 
         // Echo a brief narrator-framed notification to zone-mates immediately (before AI responds)
         const echoDisplayName = cachedCharacterName ?? cachedUsername ?? 'Someone';
+        const echoText = payload.mentionedEntityName && payload.mentionedEntityType === 'npc'
+          ? `${echoDisplayName} speaks with ${payload.mentionedEntityName}...`
+          : payload.mentionedEntityName && payload.mentionedEntityType === 'feature'
+          ? `${echoDisplayName} interacts with ${payload.mentionedEntityName}...`
+          : `${echoDisplayName} acts...`;
         socket.to(zoneRoom(activeWorldId, activeZoneSlug)).emit('player:action:echo', {
           playerId: resolvedPlayerId ?? session.playerId,
           username: cachedUsername ?? 'Unknown',
-          input: `${echoDisplayName} acts...`,
+          input: echoText,
           zoneSlug: activeZoneSlug,
           timestamp: new Date().toISOString(),
+          mentionedEntityName: payload.mentionedEntityName,
+          mentionedEntityType: payload.mentionedEntityType,
         });
 
         // Capture prior count BEFORE incrementing (so first message = 0)
@@ -296,6 +303,7 @@ export function registerSocketHandlers(
           zoneTransientNPCs,
           otherCharactersPresent,
           payload.mentionedEntityType,
+          payload.mentionedEntityName,
         );
 
         // Persist the updated transient NPC list for this zone
