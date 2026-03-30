@@ -20,6 +20,8 @@ import type {
   NameMention,
   SessionInfoPayload,
   KarmaUpdatePayload,
+  FeatureConfirmPayload,
+  ZoneTravelConfirmPayload,
 } from '@satchit/shared';
 import type { VedaZone } from '@satchit/shared';
 
@@ -168,6 +170,14 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
   const [expandedFeatureIds, setExpandedFeatureIds] = useState<Set<string>>(new Set());
   // Entity mention chip — set when player clicks an NPC/Feature in the environment panel
   const [entityMention, setEntityMention] = useState<{ name: string; type: 'npc' | 'feature' } | null>(null);
+  // Pending feature confirmation — server proposed a new world feature
+  const [pendingFeature, setPendingFeature] = useState<FeatureConfirmPayload | null>(null);
+  const [featureEditing, setFeatureEditing] = useState(false);
+  const [featureEditName, setFeatureEditName] = useState('');
+  const [featureEditDescription, setFeatureEditDescription] = useState('');
+  const [featureEditNarrative, setFeatureEditNarrative] = useState('');
+  // Pending zone travel confirmation — server proposed travelling to a new zone
+  const [pendingTravel, setPendingTravel] = useState<ZoneTravelConfirmPayload | null>(null);
   // Mini zone map state
   const [mapZones, setMapZones] = useState<Array<{ slug: string; name: string }>>([]);
   const [mapEdges, setMapEdges] = useState<Array<{ from: string; to: string }>>([]);
@@ -429,6 +439,15 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
       }
     });
 
+    socket.on('feature:confirm', (payload: FeatureConfirmPayload) => {
+      setPendingFeature(payload);
+      setFeatureEditing(false);
+    });
+
+    socket.on('zone:travel:confirm', (payload: ZoneTravelConfirmPayload) => {
+      setPendingTravel(payload);
+    });
+
     socket.on('session:error', (payload: ErrorPayload) => {
       addLog({ type: 'error', text: `Error: ${payload.message}`, timestamp: new Date().toISOString() });
     });
@@ -667,6 +686,159 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
             <span><span style={{ color: MENTION_COLORS.npc }}>■</span> NPC</span>
             <span><span style={{ color: MENTION_COLORS.pc }}>■</span> Character</span>
             <span><span style={{ color: MENTION_COLORS.rishi }}>■</span> Rishi</span>
+          </div>
+        )}
+
+        {/* Zone travel confirmation banner */}
+        {pendingTravel && (
+          <div style={{
+            border: '1px solid var(--warning)',
+            borderRadius: '6px',
+            padding: '0.6rem 0.75rem',
+            marginBottom: '0.5rem',
+            flexShrink: 0,
+            background: 'rgba(255,170,0,0.06)',
+          }}>
+            <div style={{ fontSize: '0.78rem', color: 'var(--warning)', marginBottom: '0.4rem' }}>
+              Travel to <strong>&quot;{pendingTravel.destinationZoneName}&quot;</strong>
+              {pendingTravel.isNewZone && <span style={{ fontSize: '0.7rem', opacity: 0.7 }}> — new region</span>}?
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={() => {
+                  socketRef.current?.emit('zone:travel:confirm:response', {
+                    pendingTravelId: pendingTravel.pendingTravelId,
+                    sessionId: sessionId.current,
+                    action: 'confirm',
+                  });
+                  setPendingTravel(null);
+                }}
+                style={{ background: 'var(--warning)', border: 'none', color: '#000', borderRadius: '4px', padding: '0.25rem 0.65rem', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600 }}
+              >
+                Yes →
+              </button>
+              <button
+                onClick={() => {
+                  socketRef.current?.emit('zone:travel:confirm:response', {
+                    pendingTravelId: pendingTravel.pendingTravelId,
+                    sessionId: sessionId.current,
+                    action: 'cancel',
+                  });
+                  setPendingTravel(null);
+                }}
+                style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', borderRadius: '4px', padding: '0.25rem 0.65rem', fontSize: '0.78rem', cursor: 'pointer' }}
+              >
+                Stay
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Feature creation confirmation banner */}
+        {pendingFeature && (
+          <div style={{
+            border: '1px solid var(--accent)',
+            borderRadius: '6px',
+            padding: '0.6rem 0.75rem',
+            marginBottom: '0.5rem',
+            flexShrink: 0,
+            background: 'rgba(100,100,255,0.05)',
+          }}>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '0.35rem', opacity: 0.8 }}>
+              You leave something behind in the world
+            </div>
+            {!featureEditing ? (
+              <>
+                <div style={{ marginBottom: '0.3rem' }}>
+                  <span style={{ color: 'var(--accent)', fontWeight: 600, fontSize: '0.85rem' }}>
+                    &quot;{pendingFeature.name}&quot;
+                  </span>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: '0.4rem', opacity: 0.75 }}>
+                    [{pendingFeature.featureType}]
+                  </span>
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text)', marginBottom: '0.2rem', lineHeight: 1.4 }}>
+                  {pendingFeature.description}
+                </div>
+                {pendingFeature.narrative && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: '0.3rem', lineHeight: 1.4 }}>
+                    {pendingFeature.narrative}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <input
+                  value={featureEditName}
+                  onChange={e => setFeatureEditName(e.target.value)}
+                  placeholder="Feature name"
+                  style={{ width: '100%', background: 'transparent', border: '1px solid var(--border)', borderRadius: '3px', color: 'var(--accent)', fontSize: '0.78rem', padding: '0.25rem 0.4rem', marginBottom: '0.3rem', boxSizing: 'border-box' }}
+                />
+                <textarea
+                  value={featureEditDescription}
+                  onChange={e => setFeatureEditDescription(e.target.value)}
+                  placeholder="Description"
+                  rows={2}
+                  style={{ width: '100%', background: 'transparent', border: '1px solid var(--border)', borderRadius: '3px', color: 'var(--text)', fontSize: '0.75rem', padding: '0.25rem 0.4rem', marginBottom: '0.3rem', resize: 'vertical', boxSizing: 'border-box' }}
+                />
+                <textarea
+                  value={featureEditNarrative}
+                  onChange={e => setFeatureEditNarrative(e.target.value)}
+                  placeholder="Narrative lore (optional)"
+                  rows={2}
+                  style={{ width: '100%', background: 'transparent', border: '1px solid var(--border)', borderRadius: '3px', color: 'var(--text-muted)', fontSize: '0.72rem', fontStyle: 'italic', padding: '0.25rem 0.4rem', marginBottom: '0.3rem', resize: 'vertical', boxSizing: 'border-box' }}
+                />
+              </>
+            )}
+            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+              {!featureEditing ? (
+                <button
+                  onClick={() => {
+                    setFeatureEditing(true);
+                    setFeatureEditName(pendingFeature.name);
+                    setFeatureEditDescription(pendingFeature.description);
+                    setFeatureEditNarrative(pendingFeature.narrative ?? '');
+                  }}
+                  style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', borderRadius: '4px', padding: '0.2rem 0.55rem', fontSize: '0.75rem', cursor: 'pointer' }}
+                >
+                  Edit
+                </button>
+              ) : null}
+              <button
+                onClick={() => {
+                  const isEdit = featureEditing;
+                  socketRef.current?.emit('feature:confirm:response', {
+                    pendingId: pendingFeature.pendingId,
+                    sessionId: sessionId.current,
+                    action: isEdit ? 'edit' : 'confirm',
+                    ...(isEdit && {
+                      editedName: featureEditName || undefined,
+                      editedDescription: featureEditDescription || undefined,
+                      editedNarrative: featureEditNarrative || undefined,
+                    }),
+                  });
+                  setPendingFeature(null);
+                  setFeatureEditing(false);
+                }}
+                style={{ background: 'var(--accent)', border: 'none', color: '#fff', borderRadius: '4px', padding: '0.2rem 0.55rem', fontSize: '0.75rem', cursor: 'pointer', fontWeight: 600 }}
+              >
+                {featureEditing ? 'Confirm Edit' : 'Record in Veda'}
+              </button>
+              <button
+                onClick={() => {
+                  socketRef.current?.emit('feature:confirm:response', {
+                    pendingId: pendingFeature.pendingId,
+                    sessionId: sessionId.current,
+                    action: 'cancel',
+                  });
+                  setPendingFeature(null);
+                  setFeatureEditing(false);
+                }}
+                style={{ background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', borderRadius: '4px', padding: '0.2rem 0.55rem', fontSize: '0.75rem', cursor: 'pointer', opacity: 0.7 }}
+              >
+                Discard
+              </button>
+            </div>
           </div>
         )}
 
