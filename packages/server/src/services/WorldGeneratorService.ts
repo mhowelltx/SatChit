@@ -188,6 +188,8 @@ export class WorldGeneratorService {
     otherCharactersPresent: Array<{ characterName: string; username: string }> = [],
     /** When set to 'feature', skip feature-creation extraction (player is interacting, not building) */
     mentionedEntityType?: 'npc' | 'feature',
+    /** The specific NPC or Feature the player targeted via the environment panel card */
+    mentionedEntityName?: string,
   ): Promise<ActionResult> {
     // Check Veda cache
     let zone = await this.vedaService.getZone(world.id, currentZoneSlug);
@@ -367,11 +369,15 @@ export class WorldGeneratorService {
     const scriptedOutcomeLine = scriptedOutcome
       ? `\nIMPORTANT: This action triggers a predetermined interaction. Incorporate this exact outcome into your narration: "${scriptedOutcome}"`
       : '';
+    const npcTargetLine = mentionedEntityName && mentionedEntityType === 'npc'
+      ? `\nThe player is specifically addressing ${mentionedEntityName}. Focus the NPC response on ${mentionedEntityName} only — other NPCs present should remain silent and not initiate dialogue in this narration unless directly and unavoidably involved.`
+      : '';
+
     const narrationPrompt = `The player is in "${zone!.name}" and does the following: "${playerInput}".
        ${characterLine}
        Narrate what happens, staying true to the world's laws and the zone's established details.
        If the player interacts with an NPC, reflect that NPC's disposition and personality.
-       If the player interacts with a known feature (${featuresInZone.map(f => f.name).join(', ') || 'none'}), acknowledge it naturally.${scriptedOutcomeLine}
+       If the player interacts with a known feature (${featuresInZone.map(f => f.name).join(', ') || 'none'}), acknowledge it naturally.${scriptedOutcomeLine}${npcTargetLine}
        IMPORTANT: If the action results in the character arriving somewhere new, write only a brief 1-2 sentence transition message describing the movement. Do NOT describe the new location in detail — a full description will be displayed separately in the UI.`;
 
     const segmentShape: { segments: NarrationSegment[] } = {

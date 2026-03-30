@@ -150,6 +150,8 @@ export interface PlayerActionEchoPayload {
   input: string;
   zoneSlug: string;
   timestamp: string;
+  mentionedEntityName?: string;
+  mentionedEntityType?: 'npc' | 'feature';
 }
 
 /** Direct zone chat message — no AI involved */
