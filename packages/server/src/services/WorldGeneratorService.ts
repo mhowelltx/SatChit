@@ -24,6 +24,19 @@ interface ZoneFeatureEntry {
   interactionTriggers?: string[];
 }
 
+/** Extracted feature proposal before player confirmation and DB persistence */
+export interface ProposedFeature {
+  name: string;
+  featureType: string;
+  description: string;
+  narrative?: string;
+  worldId: string;
+  zoneId: string;
+  builtByPlayerId: string;
+  builtByCharacterId: string | null;
+  builtByCharacterName: string | null;
+}
+
 interface ActionResult {
   narration: string;
   zone: VedaZone;
@@ -41,8 +54,8 @@ interface ActionResult {
   characterName?: string;
   /** AI-assigned mood extracted from this narration */
   nextMood?: string;
-  /** A player-built feature detected in this narration */
-  newFeature?: WorldFeature;
+  /** A player-built feature proposal (not yet persisted — awaiting player confirmation) */
+  proposedFeature?: ProposedFeature;
   /** Updated list of transient NPCs for the current zone after this action */
   transientNPCsInZone?: TransientNPC[];
   /** rawContent of the new/current zone to display in the environment panel (not chat) */
@@ -116,12 +129,12 @@ export class WorldGeneratorService {
     const ai = this.providerFor(world);
 
     // Generate origin summary
-    const originSummary = await ai.generate(
+    const originSummary = this.extractPlainText(await ai.generate(
       `Write a vivid, 2-paragraph origin summary for the world of "${world.name}".
        This will be the first thing players see when they discover this world.
        Hint at mysteries, cultures, and the laws that shape existence here.`,
       context,
-    );
+    ));
 
     // Generate starter zone details (including atmosphere tags)
     const starterZoneShape = {
@@ -161,7 +174,7 @@ export class WorldGeneratorService {
         name: def.name,
         slug,
         description: def.description,
-        rawContent: def.rawContent,
+        rawContent: this.extractPlainText(def.rawContent ?? ''),
         atmosphereTags: Array.isArray(def.atmosphereTags) ? def.atmosphereTags : [],
       });
       starterZones.push(zone);
@@ -186,6 +199,10 @@ export class WorldGeneratorService {
     currentMood?: string,
     transientNPCs: TransientNPC[] = [],
     otherCharactersPresent: Array<{ characterName: string; username: string }> = [],
+    /** When set to 'feature', skip feature-creation extraction (player is interacting, not building) */
+    mentionedEntityType?: 'npc' | 'feature',
+    /** The specific NPC or Feature the player targeted via the environment panel card */
+    mentionedEntityName?: string,
   ): Promise<ActionResult> {
     // Check Veda cache
     let zone = await this.vedaService.getZone(world.id, currentZoneSlug);
@@ -365,11 +382,15 @@ export class WorldGeneratorService {
     const scriptedOutcomeLine = scriptedOutcome
       ? `\nIMPORTANT: This action triggers a predetermined interaction. Incorporate this exact outcome into your narration: "${scriptedOutcome}"`
       : '';
+    const npcTargetLine = mentionedEntityName && mentionedEntityType === 'npc'
+      ? `\nThe player is specifically addressing ${mentionedEntityName}. Focus the NPC response on ${mentionedEntityName} only — other NPCs present should remain silent and not initiate dialogue in this narration unless directly and unavoidably involved.`
+      : '';
+
     const narrationPrompt = `The player is in "${zone!.name}" and does the following: "${playerInput}".
        ${characterLine}
        Narrate what happens, staying true to the world's laws and the zone's established details.
        If the player interacts with an NPC, reflect that NPC's disposition and personality.
-       If the player interacts with a known feature (${featuresInZone.map(f => f.name).join(', ') || 'none'}), acknowledge it naturally.${scriptedOutcomeLine}
+       If the player interacts with a known feature (${featuresInZone.map(f => f.name).join(', ') || 'none'}), acknowledge it naturally.${scriptedOutcomeLine}${npcTargetLine}
        IMPORTANT: If the action results in the character arriving somewhere new, write only a brief 1-2 sentence transition message describing the movement. Do NOT describe the new location in detail — a full description will be displayed separately in the UI.`;
 
     const segmentShape: { segments: NarrationSegment[] } = {
@@ -409,6 +430,12 @@ export class WorldGeneratorService {
       .map(s => s.text)
       .join('\n\n') || segments.map(s => s.text).join('\n\n');
 
+    // Full text including NPC speech — used for extraction so name reveals inside dialogue are detected
+    const fullNarrationForExtraction = segments.map(s => {
+      if (s.type === 'npc_speech') return `${(s as any).speakerName ?? 'NPC'} says: "${s.text}"`;
+      return s.text;
+    }).join('\n\n');
+
     // Best-effort: generate 3-4 suggested follow-up actions
     let suggestions: string[] | undefined;
     try {
@@ -442,11 +469,20 @@ export class WorldGeneratorService {
       // Mood extraction is best-effort
     }
 
-    // Attempt to extract and persist any new NPCs mentioned in the narration
-    const updatedTransientNPCs = await this.extractAndPersistNPCs(world, zone!, narration, playerId, transientNPCs, ai);
+    // Attempt to extract and persist any new NPCs mentioned in the narration.
+    // Use fullNarrationForExtraction so NPC speech (e.g. "I am Kael") is visible to the
+    // extraction AI — name reveals happen in dialogue, not just in narrator prose.
+    // Pass existing NPC names so the AI doesn't re-extract already-known characters.
+    const updatedTransientNPCs = await this.extractAndPersistNPCs(
+      world, zone!, fullNarrationForExtraction, playerId, transientNPCs, ai,
+      npcsInZone.map(n => n.name),
+    );
 
-    // Attempt to detect and persist any player-built world features
-    const newFeature = await this.extractAndPersistFeatures(
+    // Attempt to detect and persist any player-built world features.
+    // Skip when the player explicitly clicked an existing feature (mentionedEntityType='feature')
+    // since they are interacting, not building. Also pass playerInput and existing feature names
+    // so the extraction AI can distinguish new construction from interactions.
+    const proposedFeature = mentionedEntityType === 'feature' ? null : await this.extractFeatureProposal(
       world,
       zone!,
       narration,
@@ -454,6 +490,8 @@ export class WorldGeneratorService {
       characterContext?.name ?? null,
       activeCharacterId(character),
       ai,
+      playerInput,
+      featuresInZone.map(f => f.name),
     );
 
     // Best-effort: update NPC relationships based on interaction
@@ -485,16 +523,24 @@ export class WorldGeneratorService {
     let nextZone: VedaZone | undefined;
     let isNewNextZone = false;
     try {
+      const existingFeatureNames = featuresInZone.map(f => f.name);
+      const featureExclusionLine = existingFeatureNames.length > 0
+        ? `\n         These are FEATURES (objects/structures) in this zone — they are NOT new locations: ${existingFeatureNames.join(', ')}`
+        : '';
       const transitionResult = await ai.generateStructured(
         `Does this narration clearly describe the character ARRIVING at or ENTERING a distinctly new named location — not just moving within the current area?
-         Current zone: "${zone!.name}"
+         Current zone: "${zone!.name}"${featureExclusionLine}
          If yes, provide the destination location name (2-5 words) as newZoneName.
          If no transition occurred, leave newZoneName as an empty string.
          Narration: "${narration}"`,
         { world: context.world },
         { newZoneName: '' },
       );
-      const candidateName = transitionResult?.newZoneName;
+      let candidateName = transitionResult?.newZoneName;
+      // Guard: discard if the detected name matches an existing feature name
+      if (candidateName && existingFeatureNames.some(fn => fn.toLowerCase() === (candidateName as string).toLowerCase())) {
+        candidateName = '';
+      }
       if (candidateName && typeof candidateName === 'string' && candidateName.trim() !== '') {
         // @ts-ignore: slugify CJS/ESM interop issue with NodeNext
         const candidateSlug = slugify(candidateName, { lower: true, strict: true });
@@ -556,7 +602,7 @@ export class WorldGeneratorService {
       npcRelationshipScores: npcRelationships,
       characterName: characterContext?.name,
       nextMood,
-      ...(newFeature ? { newFeature } : {}),
+      ...(proposedFeature ? { proposedFeature } : {}),
       transientNPCsInZone: updatedTransientNPCs,
       zoneDescription: nextZone?.rawContent ?? (isNewZone ? zone?.rawContent : undefined),
       segments,
@@ -579,6 +625,7 @@ export class WorldGeneratorService {
     playerId: string,
     existingTransientNPCs: TransientNPC[],
     ai: IAIProvider,
+    existingNpcNames: string[] = [],
   ): Promise<TransientNPC[]> {
     // Start with a mutable copy of transient NPCs carried from prior actions
     const transientMap = new Map<string, TransientNPC>(
@@ -603,11 +650,15 @@ export class WorldGeneratorService {
         ],
       };
 
+      const existingNpcHint = existingNpcNames.length > 0
+        ? `\nNPCs that ALREADY EXIST in this zone (they may appear in narration — do not mark their name as newly revealed unless a new introduction occurs): ${existingNpcNames.join(', ')}.`
+        : '';
+
       const extracted = await ai.generateStructured(
         `Read this narration and extract every NPC (person, creature, or significant being) who appears.
          For each NPC:
          - Set hasProperName to true only if the NPC has a real personal name (not just a role like "a guard" or "the merchant").
-         - Set nameRevealedToPlayer to true ONLY if the NPC explicitly stated their name, was introduced by another character, or a nameplate/sign revealed it in THIS narration. Do NOT set it true just because you used a name in narration for narrative convenience.
+         - Set nameRevealedToPlayer to true ONLY if the NPC explicitly stated their name, was introduced by another character, or a nameplate/sign revealed it in THIS narration. Do NOT set it true just because you used a name in narration for narrative convenience.${existingNpcHint}
          Return an empty array if no NPCs appear.
          Narration: "${narration}"`,
         { world: { name: world.name, foundationalLaws: world.foundationalLaws ?? [], culturalTypologies: world.culturalTypologies ?? [] } },
@@ -691,7 +742,11 @@ export class WorldGeneratorService {
    * Ask the AI if the player built or created a permanent world feature.
    * If detected and not already recorded, persist it and return it.
    */
-  private async extractAndPersistFeatures(
+  /**
+   * Extract a proposed world feature from narration without persisting it.
+   * Returns a ProposedFeature for the handler to present to the player for confirmation.
+   */
+  private async extractFeatureProposal(
     world: World,
     zone: VedaZone,
     narration: string,
@@ -699,7 +754,9 @@ export class WorldGeneratorService {
     characterName: string | null,
     characterId: string | null,
     ai: IAIProvider,
-  ): Promise<WorldFeature | null> {
+    playerInput: string = '',
+    existingFeatureNames: string[] = [],
+  ): Promise<ProposedFeature | null> {
     try {
       const featureShape = {
         featureCreated: false,
@@ -709,10 +766,17 @@ export class WorldGeneratorService {
         narrative: 'expanded lore narrative about this feature (2-3 sentences)',
       };
 
+      const existingList = existingFeatureNames.length > 0
+        ? `\nFeatures that ALREADY EXIST in this zone (do NOT re-create these): ${existingFeatureNames.join(', ')}.`
+        : '';
+      const inputHint = playerInput
+        ? `\nThe player's action was: "${playerInput}"`
+        : '';
+
       const extracted = await ai.generateStructured(
         `Did the player BUILD, CONSTRUCT, ERECT, CARVE, or CREATE a permanent physical feature in this narration?
-         Only set featureCreated to true if the player's action directly resulted in creating something new and tangible that would persist in the world (e.g. a monument, altar, cairn, building, marker, shrine, structure, throne).
-         Do NOT include pre-existing things the player merely discovered or interacted with.
+         Only set featureCreated to true if the player's action directly resulted in creating something NEW and tangible that would persist in the world (e.g. a monument, altar, cairn, building, marker, shrine, structure, throne).
+         Do NOT include pre-existing things the player merely discovered, examined, or interacted with.${existingList}${inputHint}
          If yes, set featureCreated: true and fill in name, featureType, description, and narrative (expanded lore about this feature).
          If no, set featureCreated: false.
          Valid featureType values: MONUMENT, BUILDING, ALTAR, STRUCTURE, MARKER, OTHER
@@ -722,51 +786,72 @@ export class WorldGeneratorService {
       );
 
       if (!extracted?.featureCreated || !extracted.name) return null;
-      const featureData = extracted;
 
-      // Avoid duplicates
-      const existing = await this.worldFeatureService.findByName(world.id, featureData.name);
+      // Avoid duplicates (check against existing names passed in + DB)
+      const existing = await this.worldFeatureService.findByName(world.id, extracted.name);
       if (existing) return null;
 
-      const feature = await this.worldFeatureService.create({
+      return {
+        name: extracted.name,
+        featureType: extracted.featureType ?? 'OTHER',
+        description: extracted.description ?? extracted.name,
+        narrative: (extracted as any).narrative ?? undefined,
         worldId: world.id,
         zoneId: zone.id,
-        name: featureData.name,
-        description: featureData.description ?? featureData.name,
-        narrative: (featureData as any).narrative ?? undefined,
-        featureType: featureData.featureType ?? 'OTHER',
         builtByPlayerId: playerId,
-        builtByCharacterId: characterId ?? undefined,
-        builtByCharacterName: characterName ?? undefined,
-      });
-
-      // Extract interaction scripts for the new feature (best-effort)
-      try {
-        const scriptShape = {
-          scripts: [{ trigger: 'open', outcome: 'The lid creaks open revealing glittering coins.' }],
-        };
-        const scriptResult = await ai.generateStructured(
-          `A character just created: "${featureData.name}" — ${featureData.description}.
-           Based on the world's laws and the feature's nature, propose 1-3 natural ways a future player might interact with it.
-           For each, provide a "trigger" (1-3 word verb phrase like "open", "pray at", "touch", "examine") and an "outcome" (1-3 sentence narrative that plays when triggered).
-           Keep outcomes grounded in this world's tone and laws.`,
-          { world: { name: world.name, foundationalLaws: world.foundationalLaws ?? [], culturalTypologies: world.culturalTypologies ?? [] } },
-          scriptShape,
-        );
-        for (const s of scriptResult?.scripts ?? []) {
-          if (s.trigger && s.outcome) {
-            await this.worldFeatureService.addInteractionScript(feature.id, s.trigger, s.outcome);
-          }
-        }
-      } catch {
-        // Script extraction is best-effort
-      }
-
-      return feature;
+        builtByCharacterId: characterId,
+        builtByCharacterName: characterName,
+      };
     } catch {
       // Feature extraction is best-effort
       return null;
     }
+  }
+
+  /**
+   * Persist a confirmed ProposedFeature to the database and generate interaction scripts.
+   * Called after the player approves (or edits) the feature confirmation prompt.
+   */
+  async persistConfirmedFeature(
+    proposal: ProposedFeature,
+    ai: IAIProvider,
+    worldContext: { name: string; foundationalLaws?: string[]; culturalTypologies?: string[] },
+  ): Promise<WorldFeature> {
+    const feature = await this.worldFeatureService.create({
+      worldId: proposal.worldId,
+      zoneId: proposal.zoneId,
+      name: proposal.name,
+      description: proposal.description,
+      narrative: proposal.narrative,
+      featureType: proposal.featureType,
+      builtByPlayerId: proposal.builtByPlayerId,
+      builtByCharacterId: proposal.builtByCharacterId ?? undefined,
+      builtByCharacterName: proposal.builtByCharacterName ?? undefined,
+    });
+
+    // Extract interaction scripts (best-effort)
+    try {
+      const scriptShape = {
+        scripts: [{ trigger: 'open', outcome: 'The lid creaks open revealing glittering coins.' }],
+      };
+      const scriptResult = await ai.generateStructured(
+        `A character just created: "${proposal.name}" — ${proposal.description}.
+         Based on the world's laws and the feature's nature, propose 1-3 natural ways a future player might interact with it.
+         For each, provide a "trigger" (1-3 word verb phrase like "open", "pray at", "touch", "examine") and an "outcome" (1-3 sentence narrative that plays when triggered).
+         Keep outcomes grounded in this world's tone and laws.`,
+        { world: { name: worldContext.name, foundationalLaws: worldContext.foundationalLaws ?? [], culturalTypologies: worldContext.culturalTypologies ?? [] } },
+        scriptShape,
+      );
+      for (const s of scriptResult?.scripts ?? []) {
+        if (s.trigger && s.outcome) {
+          await this.worldFeatureService.addInteractionScript(feature.id, s.trigger, s.outcome);
+        }
+      }
+    } catch {
+      // Script extraction is best-effort
+    }
+
+    return feature;
   }
 
   /**
