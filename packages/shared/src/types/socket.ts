@@ -32,6 +32,9 @@ export interface SessionJoinPayload {
 export interface PlayerActionPayload {
   sessionId: string;
   input: string;
+  /** Set when the player clicked an entity in the environment panel to anchor the interaction */
+  mentionedEntityName?: string;
+  mentionedEntityType?: 'npc' | 'feature';
 }
 
 export interface PlayerMovePayload {

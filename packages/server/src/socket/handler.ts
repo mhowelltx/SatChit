@@ -295,6 +295,7 @@ export function registerSocketHandlers(
           currentMood,
           zoneTransientNPCs,
           otherCharactersPresent,
+          payload.mentionedEntityType,
         );
 
         // Persist the updated transient NPC list for this zone

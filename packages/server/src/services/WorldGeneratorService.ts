@@ -116,12 +116,12 @@ export class WorldGeneratorService {
     const ai = this.providerFor(world);
 
     // Generate origin summary
-    const originSummary = await ai.generate(
+    const originSummary = this.extractPlainText(await ai.generate(
       `Write a vivid, 2-paragraph origin summary for the world of "${world.name}".
        This will be the first thing players see when they discover this world.
        Hint at mysteries, cultures, and the laws that shape existence here.`,
       context,
-    );
+    ));
 
     // Generate starter zone details (including atmosphere tags)
     const starterZoneShape = {
@@ -161,7 +161,7 @@ export class WorldGeneratorService {
         name: def.name,
         slug,
         description: def.description,
-        rawContent: def.rawContent,
+        rawContent: this.extractPlainText(def.rawContent ?? ''),
         atmosphereTags: Array.isArray(def.atmosphereTags) ? def.atmosphereTags : [],
       });
       starterZones.push(zone);
@@ -186,6 +186,8 @@ export class WorldGeneratorService {
     currentMood?: string,
     transientNPCs: TransientNPC[] = [],
     otherCharactersPresent: Array<{ characterName: string; username: string }> = [],
+    /** When set to 'feature', skip feature-creation extraction (player is interacting, not building) */
+    mentionedEntityType?: 'npc' | 'feature',
   ): Promise<ActionResult> {
     // Check Veda cache
     let zone = await this.vedaService.getZone(world.id, currentZoneSlug);
@@ -451,10 +453,17 @@ export class WorldGeneratorService {
     // Attempt to extract and persist any new NPCs mentioned in the narration.
     // Use fullNarrationForExtraction so NPC speech (e.g. "I am Kael") is visible to the
     // extraction AI — name reveals happen in dialogue, not just in narrator prose.
-    const updatedTransientNPCs = await this.extractAndPersistNPCs(world, zone!, fullNarrationForExtraction, playerId, transientNPCs, ai);
+    // Pass existing NPC names so the AI doesn't re-extract already-known characters.
+    const updatedTransientNPCs = await this.extractAndPersistNPCs(
+      world, zone!, fullNarrationForExtraction, playerId, transientNPCs, ai,
+      npcsInZone.map(n => n.name),
+    );
 
-    // Attempt to detect and persist any player-built world features
-    const newFeature = await this.extractAndPersistFeatures(
+    // Attempt to detect and persist any player-built world features.
+    // Skip when the player explicitly clicked an existing feature (mentionedEntityType='feature')
+    // since they are interacting, not building. Also pass playerInput and existing feature names
+    // so the extraction AI can distinguish new construction from interactions.
+    const newFeature = mentionedEntityType === 'feature' ? null : await this.extractAndPersistFeatures(
       world,
       zone!,
       narration,
@@ -462,6 +471,8 @@ export class WorldGeneratorService {
       characterContext?.name ?? null,
       activeCharacterId(character),
       ai,
+      playerInput,
+      featuresInZone.map(f => f.name),
     );
 
     // Best-effort: update NPC relationships based on interaction
@@ -587,6 +598,7 @@ export class WorldGeneratorService {
     playerId: string,
     existingTransientNPCs: TransientNPC[],
     ai: IAIProvider,
+    existingNpcNames: string[] = [],
   ): Promise<TransientNPC[]> {
     // Start with a mutable copy of transient NPCs carried from prior actions
     const transientMap = new Map<string, TransientNPC>(
@@ -611,11 +623,15 @@ export class WorldGeneratorService {
         ],
       };
 
+      const existingNpcHint = existingNpcNames.length > 0
+        ? `\nNPCs that ALREADY EXIST in this zone (they may appear in narration — do not mark their name as newly revealed unless a new introduction occurs): ${existingNpcNames.join(', ')}.`
+        : '';
+
       const extracted = await ai.generateStructured(
         `Read this narration and extract every NPC (person, creature, or significant being) who appears.
          For each NPC:
          - Set hasProperName to true only if the NPC has a real personal name (not just a role like "a guard" or "the merchant").
-         - Set nameRevealedToPlayer to true ONLY if the NPC explicitly stated their name, was introduced by another character, or a nameplate/sign revealed it in THIS narration. Do NOT set it true just because you used a name in narration for narrative convenience.
+         - Set nameRevealedToPlayer to true ONLY if the NPC explicitly stated their name, was introduced by another character, or a nameplate/sign revealed it in THIS narration. Do NOT set it true just because you used a name in narration for narrative convenience.${existingNpcHint}
          Return an empty array if no NPCs appear.
          Narration: "${narration}"`,
         { world: { name: world.name, foundationalLaws: world.foundationalLaws ?? [], culturalTypologies: world.culturalTypologies ?? [] } },
@@ -707,6 +723,8 @@ export class WorldGeneratorService {
     characterName: string | null,
     characterId: string | null,
     ai: IAIProvider,
+    playerInput: string = '',
+    existingFeatureNames: string[] = [],
   ): Promise<WorldFeature | null> {
     try {
       const featureShape = {
@@ -717,10 +735,17 @@ export class WorldGeneratorService {
         narrative: 'expanded lore narrative about this feature (2-3 sentences)',
       };
 
+      const existingList = existingFeatureNames.length > 0
+        ? `\nFeatures that ALREADY EXIST in this zone (do NOT re-create these): ${existingFeatureNames.join(', ')}.`
+        : '';
+      const inputHint = playerInput
+        ? `\nThe player's action was: "${playerInput}"`
+        : '';
+
       const extracted = await ai.generateStructured(
         `Did the player BUILD, CONSTRUCT, ERECT, CARVE, or CREATE a permanent physical feature in this narration?
-         Only set featureCreated to true if the player's action directly resulted in creating something new and tangible that would persist in the world (e.g. a monument, altar, cairn, building, marker, shrine, structure, throne).
-         Do NOT include pre-existing things the player merely discovered or interacted with.
+         Only set featureCreated to true if the player's action directly resulted in creating something NEW and tangible that would persist in the world (e.g. a monument, altar, cairn, building, marker, shrine, structure, throne).
+         Do NOT include pre-existing things the player merely discovered, examined, or interacted with.${existingList}${inputHint}
          If yes, set featureCreated: true and fill in name, featureType, description, and narrative (expanded lore about this feature).
          If no, set featureCreated: false.
          Valid featureType values: MONUMENT, BUILDING, ALTAR, STRUCTURE, MARKER, OTHER
