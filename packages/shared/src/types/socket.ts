@@ -172,6 +172,42 @@ export interface KarmaUpdatePayload {
   reason: string;     // one-sentence explanation
 }
 
+/** Server → Client: proposed new world feature pending player confirmation */
+export interface FeatureConfirmPayload {
+  pendingId: string;
+  sessionId: string;
+  name: string;
+  featureType: FeatureType;
+  description: string;
+  narrative?: string;
+}
+
+/** Client → Server: player's response to a feature creation proposal */
+export interface FeatureConfirmResponsePayload {
+  pendingId: string;
+  sessionId: string;
+  action: 'confirm' | 'edit' | 'cancel';
+  editedName?: string;
+  editedDescription?: string;
+  editedNarrative?: string;
+}
+
+/** Server → Client: proposed zone travel pending player confirmation */
+export interface ZoneTravelConfirmPayload {
+  pendingTravelId: string;
+  sessionId: string;
+  destinationZoneName: string;
+  destinationZoneSlug: string | null; // null = new zone not yet created
+  isNewZone: boolean;
+}
+
+/** Client → Server: player's response to a zone travel proposal */
+export interface ZoneTravelConfirmResponsePayload {
+  pendingTravelId: string;
+  sessionId: string;
+  action: 'confirm' | 'cancel';
+}
+
 export interface ServerToClientEvents {
   'world:narration': (payload: NarrationPayload) => void;
   /** Actor-only: internal voice (feelings, thoughts) + personalized NPC speech ("to you") */
@@ -187,6 +223,10 @@ export interface ServerToClientEvents {
   'zone:chat': (payload: ZoneChatPayload) => void;
   /** Actor-only: karma score update after an action is evaluated against world laws */
   'karma:update': (payload: KarmaUpdatePayload) => void;
+  /** Actor-only: proposed new world feature pending player confirmation */
+  'feature:confirm': (payload: FeatureConfirmPayload) => void;
+  /** Actor-only: proposed zone travel pending player confirmation */
+  'zone:travel:confirm': (payload: ZoneTravelConfirmPayload) => void;
 }
 
 export interface ClientToServerEvents {
@@ -194,4 +234,6 @@ export interface ClientToServerEvents {
   'player:action': (payload: PlayerActionPayload) => void;
   'player:move': (payload: PlayerMovePayload) => void;
   'zone:chat': (payload: ZoneChatInputPayload) => void;
+  'feature:confirm:response': (payload: FeatureConfirmResponsePayload) => void;
+  'zone:travel:confirm:response': (payload: ZoneTravelConfirmResponsePayload) => void;
 }

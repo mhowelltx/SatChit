@@ -8,7 +8,10 @@ import type {
   PlayerMovePayload,
   ZoneChatInputPayload,
   NameMention,
+  FeatureConfirmResponsePayload,
+  ZoneTravelConfirmResponsePayload,
 } from '@satchit/shared';
+import type { ProposedFeature } from '../services/WorldGeneratorService.js';
 import type { IAIProvider } from '../ai/index.js';
 import type { TransientNPC } from '../ai/types.js';
 import { AnthropicAPIError } from '../ai/providers/anthropic.js';
@@ -99,6 +102,10 @@ export function registerSocketHandlers(
     let cachedUsername: string | null = null;
     /** Cached character name for zone presence payloads */
     let cachedCharacterName: string | null = null;
+    /** Pending feature proposals awaiting player confirmation — keyed by pendingId */
+    const pendingFeatures = new Map<string, { proposal: ProposedFeature; worldId: string }>();
+    /** Pending zone travel proposals awaiting player confirmation — keyed by pendingTravelId */
+    const pendingTravels = new Map<string, { destName: string; destSlug: string | null; isNewZone: boolean; execute: () => Promise<void> }>();
 
     socket.on('session:join', async (payload: SessionJoinPayload) => {
       try {
@@ -318,56 +325,78 @@ export function registerSocketHandlers(
 
         await sessionService.recordAction(activeSessionId, payload.input, result.narration);
 
-        // Handle zone transition: player narrative travel moved them to a new zone
+        // Handle zone transition: player narrative travel moved them to a new zone.
+        // Instead of moving immediately, propose the travel to the player for confirmation.
         if (result.nextZone && result.nextZone.slug !== activeZoneSlug) {
+          const capturedNextZone = result.nextZone;
+          const capturedIsNew = result.isNewNextZone ?? false;
           const fromSlug = activeZoneSlug;
-          const toSlug = result.nextZone.slug;
+          const toSlug = capturedNextZone.slug;
           const pid = resolvedPlayerId ?? session.playerId;
           const uname = cachedUsername ?? 'Unknown';
+          const capturedSessionId = activeSessionId;
+          const capturedWorldId = activeWorldId;
 
-          regRemove(zoneRoom(activeWorldId, fromSlug!), socket.id);
-          socket.leave(zoneRoom(activeWorldId, fromSlug!));
-          socket.to(zoneRoom(activeWorldId, fromSlug!)).emit('player:moved', {
-            playerId: pid,
-            username: uname,
-            characterName: cachedCharacterName,
-            fromZoneSlug: fromSlug,
-            toZoneSlug: toSlug,
-          });
-
-          socket.join(zoneRoom(activeWorldId, toSlug));
-          activeZoneSlug = toSlug;
-          _trackRecentZone(toSlug);
-
-          const newRoom = zoneRoom(activeWorldId, toSlug);
-          const newRoomOthers = regPlayers(newRoom).filter(p => p.playerId !== pid);
-          socket.emit('zone:presence', { zoneSlug: toSlug, players: newRoomOthers });
-          regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
-
-          await sessionService.updateZone(activeSessionId, result.nextZone.id);
-
-          socket.to(zoneRoom(activeWorldId, toSlug)).emit('player:joined', {
-            playerId: pid,
-            username: uname,
-            characterName: cachedCharacterName,
-            zoneSlug: toSlug,
-          });
-
-          if (result.isNewNextZone) {
-            io.to(`world:${activeWorldId}`).emit('veda:update', {
-              type: 'zone',
-              data: result.nextZone,
+          const executeTravelFn = async () => {
+            regRemove(zoneRoom(capturedWorldId!, fromSlug!), socket.id);
+            socket.leave(zoneRoom(capturedWorldId!, fromSlug!));
+            socket.to(zoneRoom(capturedWorldId!, fromSlug!)).emit('player:moved', {
+              playerId: pid,
+              username: uname,
+              characterName: cachedCharacterName,
+              fromZoneSlug: fromSlug,
+              toZoneSlug: toSlug,
             });
-          }
 
-          // Record zone traversal edge (undirected) and broadcast if new
-          const newEdge = await vedaService.saveZoneEdge(activeWorldId, fromSlug!, toSlug);
-          if (newEdge) {
-            io.to(`world:${activeWorldId}`).emit('veda:update', {
-              type: 'edge',
-              data: newEdge,
+            socket.join(zoneRoom(capturedWorldId!, toSlug));
+            activeZoneSlug = toSlug;
+            _trackRecentZone(toSlug);
+
+            const newRoom = zoneRoom(capturedWorldId!, toSlug);
+            const newRoomOthers = regPlayers(newRoom).filter(p => p.playerId !== pid);
+            socket.emit('zone:presence', { zoneSlug: toSlug, players: newRoomOthers });
+            regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
+
+            await sessionService.updateZone(capturedSessionId!, capturedNextZone.id);
+
+            socket.to(zoneRoom(capturedWorldId!, toSlug)).emit('player:joined', {
+              playerId: pid,
+              username: uname,
+              characterName: cachedCharacterName,
+              zoneSlug: toSlug,
             });
-          }
+
+            if (capturedIsNew) {
+              io.to(`world:${capturedWorldId}`).emit('veda:update', {
+                type: 'zone',
+                data: capturedNextZone,
+              });
+            }
+
+            const newEdge = await vedaService.saveZoneEdge(capturedWorldId!, fromSlug!, toSlug);
+            if (newEdge) {
+              io.to(`world:${capturedWorldId}`).emit('veda:update', {
+                type: 'edge',
+                data: newEdge,
+              });
+            }
+          };
+
+          const pendingTravelId = `travel-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          pendingTravels.set(pendingTravelId, {
+            destName: capturedNextZone.name,
+            destSlug: toSlug,
+            isNewZone: capturedIsNew,
+            execute: executeTravelFn,
+          });
+          socket.emit('zone:travel:confirm', {
+            pendingTravelId,
+            sessionId: activeSessionId!,
+            destinationZoneName: capturedNextZone.name,
+            destinationZoneSlug: toSlug,
+            isNewZone: capturedIsNew,
+          });
+          setTimeout(() => pendingTravels.delete(pendingTravelId), 5 * 60 * 1000);
         } else {
           await sessionService.updateZone(activeSessionId, result.zone.id);
         }
@@ -522,12 +551,19 @@ export function registerSocketHandlers(
           });
         }
 
-        // If a new player-built feature was created, broadcast veda update
-        if (result.newFeature) {
-          io.to(`world:${activeWorldId}`).emit('veda:update', {
-            type: 'feature',
-            data: result.newFeature,
+        // If a new player-built feature was proposed, send to player for confirmation
+        if (result.proposedFeature && activeWorldId) {
+          const pendingId = `feat-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          pendingFeatures.set(pendingId, { proposal: result.proposedFeature, worldId: activeWorldId });
+          socket.emit('feature:confirm', {
+            pendingId,
+            sessionId: activeSessionId!,
+            name: result.proposedFeature.name,
+            featureType: result.proposedFeature.featureType as any,
+            description: result.proposedFeature.description,
+            narrative: result.proposedFeature.narrative,
           });
+          setTimeout(() => pendingFeatures.delete(pendingId), 5 * 60 * 1000);
         }
       } catch (err) {
         console.error('player:action error', err);
@@ -535,6 +571,58 @@ export function registerSocketHandlers(
           code: err instanceof AnthropicAPIError ? `AI_${err.status}` : 'INTERNAL',
           message: aiErrorMessage(err),
         });
+      }
+    });
+
+    socket.on('feature:confirm:response', async (payload: FeatureConfirmResponsePayload) => {
+      const pending = pendingFeatures.get(payload.pendingId);
+      if (!pending) return;
+      pendingFeatures.delete(payload.pendingId);
+      if (payload.action === 'cancel') return;
+
+      try {
+        const proposal = { ...pending.proposal };
+        if (payload.action === 'edit') {
+          if (payload.editedName) proposal.name = payload.editedName;
+          if (payload.editedDescription) proposal.description = payload.editedDescription;
+          if (payload.editedNarrative !== undefined) proposal.narrative = payload.editedNarrative;
+        }
+
+        const world = await prisma.world.findUnique({ where: { id: pending.worldId } });
+        if (!world) return;
+
+        const feature = await worldGenerator.persistConfirmedFeature(proposal, ai, {
+          name: world.name,
+          foundationalLaws: world.foundationalLaws as string[] ?? [],
+          culturalTypologies: world.culturalTypologies as string[] ?? [],
+        });
+        io.to(`world:${pending.worldId}`).emit('veda:update', {
+          type: 'feature',
+          data: feature,
+        });
+      } catch (err) {
+        console.error('feature:confirm:response error', err);
+        socket.emit('session:error', {
+          code: 'INTERNAL',
+          message: 'Failed to record feature.',
+        });
+      }
+    });
+
+    socket.on('zone:travel:confirm:response', async (payload: ZoneTravelConfirmResponsePayload) => {
+      const pending = pendingTravels.get(payload.pendingTravelId);
+      if (!pending) return;
+      pendingTravels.delete(payload.pendingTravelId);
+      if (payload.action === 'confirm') {
+        try {
+          await pending.execute();
+        } catch (err) {
+          console.error('zone:travel:confirm:response error', err);
+          socket.emit('session:error', {
+            code: 'INTERNAL',
+            message: 'Failed to complete zone travel.',
+          });
+        }
       }
     });
 
@@ -578,121 +666,133 @@ export function registerSocketHandlers(
         const fromSlug = activeZoneSlug;
         const pid = resolvedPlayerId ?? session.playerId;
         const uname = cachedUsername ?? 'Unknown';
+        const capturedWorldId = activeWorldId;
+        const capturedSessionId = activeSessionId;
 
-        // Leave current zone room
-        if (fromSlug) {
-          regRemove(zoneRoom(activeWorldId, fromSlug), socket.id);
-          socket.leave(zoneRoom(activeWorldId, fromSlug));
-          socket.to(zoneRoom(activeWorldId, fromSlug)).emit('player:moved', {
+        // Look up destination zone to get display name (may not exist yet for new zones)
+        const existingZone = await vedaService.getZone(capturedWorldId, targetSlug);
+        const destName = existingZone?.name ?? payload.targetZoneSlug;
+        const isNewZone = !existingZone;
+
+        const executeTravelFn = async () => {
+          // Leave current zone room
+          if (fromSlug) {
+            regRemove(zoneRoom(capturedWorldId, fromSlug), socket.id);
+            socket.leave(zoneRoom(capturedWorldId, fromSlug));
+            socket.to(zoneRoom(capturedWorldId, fromSlug)).emit('player:moved', {
+              playerId: pid,
+              username: uname,
+              characterName: cachedCharacterName,
+              fromZoneSlug: fromSlug,
+              toZoneSlug: targetSlug,
+            });
+          }
+
+          // Join new zone room
+          const newRoom = zoneRoom(capturedWorldId, targetSlug);
+          socket.join(newRoom);
+          activeZoneSlug = targetSlug;
+          _trackRecentZone(targetSlug);
+
+          const newRoomOthers = regPlayers(newRoom).filter(p => p.playerId !== pid);
+          socket.emit('zone:presence', { zoneSlug: targetSlug, players: newRoomOthers });
+          regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
+
+          // Check if zone exists in Veda or generate it
+          let zone = await vedaService.getZone(capturedWorldId, targetSlug);
+
+          if (!zone) {
+            const result = await worldGenerator.processAction(
+              {
+                id: world.id,
+                creatorId: world.creatorId,
+                name: world.name,
+                slug: world.slug,
+                description: world.description,
+                visibility: world.visibility as 'PUBLIC' | 'PRIVATE',
+                foundationalLaws: world.foundationalLaws,
+                culturalTypologies: world.culturalTypologies,
+                anthropicApiKey: world.anthropicApiKey,
+                createdAt: world.createdAt,
+                updatedAt: world.updatedAt,
+              },
+              targetSlug,
+              'enter',
+              pid,
+              activeCharacterId ? await prisma.character.findUnique({ where: { id: activeCharacterId } }) as any : null,
+              0,
+              sessionActionCount,
+              currentMood,
+            );
+            zone = result.zone;
+            io.to(`world:${capturedWorldId}`).emit('veda:update', { type: 'zone', data: zone });
+          }
+
+          await sessionService.updateZone(capturedSessionId, zone.id);
+
+          const moveZoneFeatures = await worldFeatureService.findByZoneWithScripts(zone.id).catch(() => []);
+          const moveZoneFeaturesPayload = moveZoneFeatures.map(f => ({
+            id: f.id,
+            name: f.name,
+            featureType: f.featureType,
+            description: f.description,
+            narrative: (f as any).narrative ?? null,
+            builtByCharacterName: (f as any).builtByCharacterName ?? null,
+            interactionTriggers: ((f as any).interactionScripts ?? []).map((s: any) => s.trigger),
+          }));
+
+          const moveZoneNpcs = await npcService.listByZone(zone.id).catch(() => []);
+          const moveZoneNpcsPayload = await Promise.all(
+            moveZoneNpcs.map(async n => {
+              const rel = resolvedPlayerId
+                ? await npcService.getRelationship(n.id, resolvedPlayerId).catch(() => null)
+                : null;
+              const knownPlayer = resolvedPlayerId
+                ? (n.knownCharacterIds as string[]).includes(resolvedPlayerId)
+                : false;
+              return {
+                name: n.name,
+                disposition: n.disposition,
+                ...(rel ? { relationshipScore: rel.score } : {}),
+                physicalDescription: n.physicalDescription ?? undefined,
+                knownPlayer,
+                ...(knownPlayer && {
+                  traits: (n.traits as string[]) ?? [],
+                  backstory: n.backstory ?? undefined,
+                }),
+              };
+            }),
+          );
+
+          socket.emit('world:narration', {
+            text: zone.rawContent,
+            zoneSlug: zone.slug,
+            sessionId: capturedSessionId,
+            timestamp: new Date().toISOString(),
+            atmosphereTags: zone.atmosphereTags,
+            zoneNpcs: moveZoneNpcsPayload,
+            zoneDescription: zone.rawContent,
+            zoneFeatures: moveZoneFeaturesPayload,
+          });
+
+          socket.to(newRoom).emit('player:joined', {
             playerId: pid,
             username: uname,
             characterName: cachedCharacterName,
-            fromZoneSlug: fromSlug,
-            toZoneSlug: targetSlug,
+            zoneSlug: targetSlug,
           });
-        }
+        };
 
-        // Join new zone room
-        const newRoom = zoneRoom(activeWorldId, targetSlug);
-        socket.join(newRoom);
-        activeZoneSlug = targetSlug;
-        _trackRecentZone(targetSlug);
-
-        // Send presence to the moving player, then register (always emit even for empty zones
-        // so the client clears stale player entries from the previous zone)
-        const newRoomOthers = regPlayers(newRoom).filter(p => p.playerId !== pid);
-        socket.emit('zone:presence', { zoneSlug: targetSlug, players: newRoomOthers });
-        regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
-
-        // Check if zone exists in Veda or generate it
-        let zone = await vedaService.getZone(activeWorldId, targetSlug);
-
-        if (!zone) {
-          const result = await worldGenerator.processAction(
-            {
-              id: world.id,
-              creatorId: world.creatorId,
-              name: world.name,
-              slug: world.slug,
-              description: world.description,
-              visibility: world.visibility as 'PUBLIC' | 'PRIVATE',
-              foundationalLaws: world.foundationalLaws,
-              culturalTypologies: world.culturalTypologies,
-              anthropicApiKey: world.anthropicApiKey,
-              createdAt: world.createdAt,
-              updatedAt: world.updatedAt,
-            },
-            targetSlug,
-            'enter',
-            pid,
-            activeCharacterId ? await prisma.character.findUnique({ where: { id: activeCharacterId } }) as any : null,
-            0, // first visit to this zone
-            sessionActionCount,
-            currentMood,
-          );
-          zone = result.zone;
-
-          io.to(`world:${activeWorldId}`).emit('veda:update', {
-            type: 'zone',
-            data: zone,
-          });
-        }
-
-        await sessionService.updateZone(activeSessionId, zone.id);
-
-        const moveZoneFeatures = await worldFeatureService.findByZoneWithScripts(zone.id).catch(() => []);
-        const moveZoneFeaturesPayload = moveZoneFeatures.map(f => ({
-          id: f.id,
-          name: f.name,
-          featureType: f.featureType,
-          description: f.description,
-          narrative: (f as any).narrative ?? null,
-          builtByCharacterName: (f as any).builtByCharacterName ?? null,
-          interactionTriggers: ((f as any).interactionScripts ?? []).map((s: any) => s.trigger),
-        }));
-
-        // Fetch NPCs for the destination zone so the environment panel updates correctly
-        const moveZoneNpcs = await npcService.listByZone(zone.id).catch(() => []);
-        const moveZoneNpcsPayload = await Promise.all(
-          moveZoneNpcs.map(async n => {
-            const rel = resolvedPlayerId
-              ? await npcService.getRelationship(n.id, resolvedPlayerId).catch(() => null)
-              : null;
-            const knownPlayer = resolvedPlayerId
-              ? (n.knownCharacterIds as string[]).includes(resolvedPlayerId)
-              : false;
-            return {
-              name: n.name,
-              disposition: n.disposition,
-              ...(rel ? { relationshipScore: rel.score } : {}),
-              physicalDescription: n.physicalDescription ?? undefined,
-              knownPlayer,
-              ...(knownPlayer && {
-                traits: (n.traits as string[]) ?? [],
-                backstory: n.backstory ?? undefined,
-              }),
-            };
-          }),
-        );
-
-        socket.emit('world:narration', {
-          text: zone.rawContent,
-          zoneSlug: zone.slug,
-          sessionId: activeSessionId,
-          timestamp: new Date().toISOString(),
-          atmosphereTags: zone.atmosphereTags,
-          zoneNpcs: moveZoneNpcsPayload,
-          zoneDescription: zone.rawContent,
-          zoneFeatures: moveZoneFeaturesPayload,
+        const pendingTravelId = `travel-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        pendingTravels.set(pendingTravelId, { destName, destSlug: targetSlug, isNewZone, execute: executeTravelFn });
+        socket.emit('zone:travel:confirm', {
+          pendingTravelId,
+          sessionId: capturedSessionId,
+          destinationZoneName: destName,
+          destinationZoneSlug: targetSlug,
+          isNewZone,
         });
-
-        // Notify others in new zone
-        socket.to(newRoom).emit('player:joined', {
-          playerId: pid,
-          username: uname,
-          characterName: cachedCharacterName,
-          zoneSlug: targetSlug,
-        });
+        setTimeout(() => pendingTravels.delete(pendingTravelId), 5 * 60 * 1000);
       } catch (err) {
         console.error('player:move error', err);
         socket.emit('session:error', {
