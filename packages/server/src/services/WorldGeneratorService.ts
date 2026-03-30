@@ -93,8 +93,9 @@ export class WorldGeneratorService {
    * The system prompt always instructs the AI to return JSON segments, so even
    * plain `ai.generate()` calls may return `{"segments":[...]}`. This helper
    * extracts readable prose from narrator segments when that happens.
+   * Exposed as a static method so handler.ts can sanitize rawContent read from DB.
    */
-  private extractPlainText(aiResponse: string): string {
+  static extractPlainText(aiResponse: string): string {
     try {
       const parsed = JSON.parse(aiResponse);
       if (parsed?.segments && Array.isArray(parsed.segments)) {
@@ -108,6 +109,10 @@ export class WorldGeneratorService {
       // not JSON — return as-is
     }
     return aiResponse;
+  }
+
+  private extractPlainText(aiResponse: string): string {
+    return WorldGeneratorService.extractPlainText(aiResponse);
   }
 
   /**
@@ -604,7 +609,11 @@ export class WorldGeneratorService {
       nextMood,
       ...(proposedFeature ? { proposedFeature } : {}),
       transientNPCsInZone: updatedTransientNPCs,
-      zoneDescription: nextZone?.rawContent ?? (isNewZone ? zone?.rawContent : undefined),
+      zoneDescription: nextZone?.rawContent
+        ? WorldGeneratorService.extractPlainText(nextZone.rawContent)
+        : (isNewZone && zone?.rawContent)
+          ? WorldGeneratorService.extractPlainText(zone.rawContent)
+          : undefined,
       segments,
       zoneFeatures: zoneFeaturesPayload,
       ...(karmaUpdate ? { karmaUpdate } : {}),

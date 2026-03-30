@@ -157,7 +157,13 @@ export function createWorldsRouter(prisma: PrismaClient, ai: IAIProvider): Route
         vedaService.listLore(world.id),
         vedaService.listRecentEvents(world.id, 50),
       ]);
-      res.json({ zones, entities, lore, recentEvents });
+      // Sanitize rawContent and description fields in case they were stored as JSON before the fix
+      const cleanZones = zones.map(z => ({
+        ...z,
+        rawContent: WorldGeneratorService.extractPlainText(z.rawContent ?? ''),
+        description: WorldGeneratorService.extractPlainText(z.description ?? ''),
+      }));
+      res.json({ zones: cleanZones, entities, lore, recentEvents });
     } catch (err) {
       res.status(500).json({ error: 'Failed to fetch Veda.' });
     }
