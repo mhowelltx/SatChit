@@ -213,14 +213,15 @@ export function registerSocketHandlers(
             interactionTriggers: ((f as any).interactionScripts ?? []).map((s: any) => s.trigger),
           }));
 
+          const startZoneText = WorldGeneratorService.extractPlainText(startZone.rawContent ?? '');
           socket.emit('world:narration', {
-            text: startZone.rawContent,
+            text: startZoneText,
             zoneSlug: startZone.slug,
             sessionId: session.id,
             timestamp: new Date().toISOString(),
             atmosphereTags: startZone.atmosphereTags,
             zoneNpcs: startNpcsWithRel,
-            zoneDescription: startZone.rawContent,
+            zoneDescription: startZoneText,
             ...(startZoneFeaturesPayload.length > 0 && { zoneFeatures: startZoneFeaturesPayload }),
           });
 
@@ -764,14 +765,15 @@ export function registerSocketHandlers(
             }),
           );
 
+          const moveZoneText = WorldGeneratorService.extractPlainText(zone.rawContent ?? '');
           socket.emit('world:narration', {
-            text: zone.rawContent,
+            text: moveZoneText,
             zoneSlug: zone.slug,
             sessionId: capturedSessionId,
             timestamp: new Date().toISOString(),
             atmosphereTags: zone.atmosphereTags,
             zoneNpcs: moveZoneNpcsPayload,
-            zoneDescription: zone.rawContent,
+            zoneDescription: moveZoneText,
             zoneFeatures: moveZoneFeaturesPayload,
           });
 
