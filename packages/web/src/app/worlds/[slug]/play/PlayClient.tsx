@@ -166,6 +166,8 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
     interactionTriggers?: string[];
   }>>([]);
   const [expandedFeatureIds, setExpandedFeatureIds] = useState<Set<string>>(new Set());
+  // Entity mention chip — set when player clicks an NPC/Feature in the environment panel
+  const [entityMention, setEntityMention] = useState<{ name: string; type: 'npc' | 'feature' } | null>(null);
   // Mini zone map state
   const [mapZones, setMapZones] = useState<Array<{ slug: string; name: string }>>([]);
   const [mapEdges, setMapEdges] = useState<Array<{ from: string; to: string }>>([]);
@@ -183,7 +185,7 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
   }, []);
 
   const submitInput = useCallback(
-    (text: string) => {
+    (text: string, mention?: { name: string; type: 'npc' | 'feature' } | null) => {
       const trimmed = text.trim();
       if (!trimmed || !socketRef.current) return;
 
@@ -201,9 +203,11 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
         socketRef.current.emit('player:action', {
           sessionId: sessionId.current,
           input: trimmed,
+          ...(mention && { mentionedEntityName: mention.name, mentionedEntityType: mention.type }),
         });
       }
       setInput('');
+      setEntityMention(null);
     },
     [addLog],
   );
@@ -288,6 +292,7 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
         setZoneNpcs([]);
         setZoneFeatures([]);
         setZonePlayers([]);
+        setEntityMention(null);
       }
 
       // Update atmosphere tags and breadcrumb trail when zone changes
@@ -435,7 +440,7 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    submitInput(input);
+    submitInput(input, entityMention);
   }
 
   const textColor: Record<LogEntry['type'], string> = {
@@ -660,6 +665,34 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
           </div>
         )}
 
+        {/* Entity mention chip — shown when player clicked an NPC/Feature in the panel */}
+        {entityMention && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.3rem', flexShrink: 0 }}>
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+              {entityMention.type === 'npc' ? 'speaking to' : 'interacting with'}
+            </span>
+            <span style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.3rem',
+              background: 'var(--accent)',
+              color: '#fff',
+              borderRadius: '4px',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              padding: '0.1rem 0.45rem',
+            }}>
+              {entityMention.name}
+              <button
+                type="button"
+                onClick={() => setEntityMention(null)}
+                style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, fontSize: '0.75rem', lineHeight: 1 }}
+                aria-label="Clear"
+              >×</button>
+            </span>
+          </div>
+        )}
+
         {/* Input */}
         <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
           <span style={{ color: 'var(--accent)', lineHeight: '2.2rem' }}>{'>'}</span>
@@ -852,7 +885,7 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
                   </span>
                   {/* NPC Quick-Interact: click to pre-fill input */}
                   <button
-                    onClick={() => setInput(`speak to ${npc.name}`)}
+                    onClick={() => { setEntityMention({ name: npc.name, type: 'npc' }); setInput(''); }}
                     style={{
                       background: 'none',
                       border: 'none',
@@ -1014,7 +1047,7 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
                       {featureGlyph[feature.featureType] ?? '◈'}
                     </span>
                     <button
-                      onClick={() => setInput(`examine ${feature.name}`)}
+                      onClick={() => { setEntityMention({ name: feature.name, type: 'feature' }); setInput(''); }}
                       style={{
                         background: 'none',
                         border: 'none',
