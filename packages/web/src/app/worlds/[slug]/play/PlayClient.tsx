@@ -705,8 +705,10 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
             background: 'rgba(255,170,0,0.06)',
           }}>
             <div style={{ fontSize: '0.78rem', color: 'var(--warning)', marginBottom: '0.4rem' }}>
-              Travel to <strong>&quot;{pendingTravel.destinationZoneName}&quot;</strong>
-              {pendingTravel.isNewZone && <span style={{ fontSize: '0.7rem', opacity: 0.7 }}> — new region</span>}?
+              {pendingTravel.isNewZone
+                ? <>You&apos;ve discovered a new region: <strong>&quot;{pendingTravel.destinationZoneName}&quot;</strong>. Travel there?</>
+                : <>Travel to <strong>&quot;{pendingTravel.destinationZoneName}&quot;</strong>?</>
+              }
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
@@ -720,7 +722,7 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
                 }}
                 style={{ background: 'var(--warning)', border: 'none', color: '#000', borderRadius: '4px', padding: '0.25rem 0.65rem', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600 }}
               >
-                Yes →
+                {pendingTravel.isNewZone ? 'Explore →' : 'Yes →'}
               </button>
               <button
                 onClick={() => {

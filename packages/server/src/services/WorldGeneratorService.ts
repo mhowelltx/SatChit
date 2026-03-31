@@ -25,6 +25,16 @@ interface ZoneFeatureEntry {
 }
 
 /** Extracted feature proposal before player confirmation and DB persistence */
+export interface ProposedNextZone {
+  name: string;
+  slug: string;
+  rawContent: string;
+  description: string;
+  atmosphereTags: string[];
+  discoveredById: string | null;
+  worldId: string;
+}
+
 export interface ProposedFeature {
   name: string;
   featureType: string;
@@ -40,11 +50,11 @@ export interface ProposedFeature {
 interface ActionResult {
   narration: string;
   zone: VedaZone;
-  /** Destination zone if the narration describes the player arriving somewhere new */
+  /** Destination zone if the narration describes the player arriving at an EXISTING zone */
   nextZone?: VedaZone;
   isNewZone: boolean;
-  /** Whether nextZone was newly created during this action */
-  isNewNextZone?: boolean;
+  /** Proposed new zone not yet in DB — awaiting player travel confirmation before persisting */
+  proposedNextZone?: ProposedNextZone;
   suggestions?: string[];
   /** NPCs present in the zone during this action (name + disposition) */
   npcsPresent?: Array<{ name: string; disposition: string }>;
@@ -533,7 +543,7 @@ export class WorldGeneratorService {
 
     // Best-effort: detect zone transition from narration
     let nextZone: VedaZone | undefined;
-    let isNewNextZone = false;
+    let proposedNextZone: ProposedNextZone | undefined;
     try {
       const existingFeatureNames = featuresInZone.map(f => f.name);
       const featureExclusionLine = existingFeatureNames.length > 0
@@ -559,9 +569,11 @@ export class WorldGeneratorService {
         if (candidateSlug && candidateSlug !== zone!.slug) {
           const existing = await this.vedaService.getZone(world.id, candidateSlug);
           if (existing) {
+            // Existing zone: resolve immediately (no DB write needed)
             nextZone = existing;
           } else {
-            // Generate the new zone — use generateStructured to guarantee plain text (not JSON segments)
+            // New zone: generate description but do NOT persist yet.
+            // The zone is only created in the DB when the player confirms travel.
             const zoneDescResult = await ai.generateStructured(
               `Write a factual 2-3 sentence description of "${candidateName}", a location in the world of "${world.name}".
                Write in third-person present tense (e.g. "The vale is...", "Ancient stones line...").
@@ -578,16 +590,15 @@ export class WorldGeneratorService {
               { world: context.world },
               { tags: ['tag'] },
             ).catch(() => null);
-            nextZone = await this.vedaService.saveZone({
-              worldId: world.id,
+            proposedNextZone = {
               name: candidateName,
               slug: candidateSlug,
-              description: rawContent.slice(0, 150),
               rawContent,
+              description: rawContent.slice(0, 150),
               atmosphereTags: tagsResult?.tags?.slice(0, 4) ?? [],
-              discoveredById: playerId,
-            });
-            isNewNextZone = true;
+              discoveredById: playerId ?? null,
+              worldId: world.id,
+            };
           }
         }
       }
@@ -595,9 +606,8 @@ export class WorldGeneratorService {
       // Zone transition detection is best-effort
     }
 
-    // Fetch zone features for the final zone (post-transition if applicable) for environment panel
-    const finalZoneForFeatures = nextZone ?? zone!;
-    const finalZoneFeatures = await this.worldFeatureService.findByZoneWithScripts(finalZoneForFeatures.id).catch(() => []);
+    // Features are only fetched for the current zone — the proposed next zone doesn't exist yet
+    const finalZoneFeatures = await this.worldFeatureService.findByZoneWithScripts(zone!.id).catch(() => []);
     const zoneFeaturesPayload: ZoneFeatureEntry[] = finalZoneFeatures.map((f) => ({
       id: f.id,
       name: f.name,
@@ -613,7 +623,7 @@ export class WorldGeneratorService {
       zone: zone!,
       nextZone,
       isNewZone,
-      isNewNextZone,
+      proposedNextZone,
       suggestions,
       npcsPresent: npcsInZone.map((n) => ({ name: n.name, disposition: n.disposition as string })),
       npcRelationshipScores: npcRelationships,
@@ -621,11 +631,10 @@ export class WorldGeneratorService {
       nextMood,
       ...(proposedFeature ? { proposedFeature } : {}),
       transientNPCsInZone: updatedTransientNPCs,
-      zoneDescription: nextZone?.rawContent
-        ? WorldGeneratorService.extractPlainText(nextZone.rawContent)
-        : (isNewZone && zone?.rawContent)
-          ? WorldGeneratorService.extractPlainText(zone.rawContent)
-          : undefined,
+      // Only include zone description for the CURRENT zone — don't leak next zone before confirmation
+      zoneDescription: (isNewZone && zone?.rawContent)
+        ? WorldGeneratorService.extractPlainText(zone.rawContent)
+        : undefined,
       segments,
       zoneFeatures: zoneFeaturesPayload,
       ...(karmaUpdate ? { karmaUpdate } : {}),

@@ -11,7 +11,7 @@ import type {
   FeatureConfirmResponsePayload,
   ZoneTravelConfirmResponsePayload,
 } from '@satchit/shared';
-import type { ProposedFeature } from '../services/WorldGeneratorService.js';
+import type { ProposedFeature, ProposedNextZone } from '../services/WorldGeneratorService.js';
 import type { IAIProvider } from '../ai/index.js';
 import type { TransientNPC } from '../ai/types.js';
 import { AnthropicAPIError } from '../ai/providers/anthropic.js';
@@ -105,7 +105,14 @@ export function registerSocketHandlers(
     /** Pending feature proposals awaiting player confirmation — keyed by pendingId */
     const pendingFeatures = new Map<string, { proposal: ProposedFeature; worldId: string }>();
     /** Pending zone travel proposals awaiting player confirmation — keyed by pendingTravelId */
-    const pendingTravels = new Map<string, { destName: string; destSlug: string | null; isNewZone: boolean; execute: () => Promise<void> }>();
+    const pendingTravels = new Map<string, {
+      destName: string;
+      destSlug: string | null;
+      isNewZone: boolean;
+      /** Unpersisted zone data; saved to DB only when player confirms travel */
+      proposedNextZone?: ProposedNextZone;
+      execute: () => Promise<void>;
+    }>();
 
     socket.on('session:join', async (payload: SessionJoinPayload) => {
       try {
@@ -326,19 +333,45 @@ export function registerSocketHandlers(
 
         await sessionService.recordAction(activeSessionId, payload.input, result.narration);
 
-        // Handle zone transition: player narrative travel moved them to a new zone.
-        // Instead of moving immediately, propose the travel to the player for confirmation.
-        if (result.nextZone && result.nextZone.slug !== activeZoneSlug) {
-          const capturedNextZone = result.nextZone;
-          const capturedIsNew = result.isNewNextZone ?? false;
+        // Handle zone transition: narration describes travel to another zone.
+        // For EXISTING zones: nextZone is already resolved.
+        // For NEW zones: proposedNextZone has the data; the DB record is created only on confirmation.
+        const transitionDestName = result.nextZone?.name ?? result.proposedNextZone?.name;
+        const transitionDestSlug = result.nextZone?.slug ?? result.proposedNextZone?.slug;
+        const isTransitionPending = Boolean(transitionDestSlug && transitionDestSlug !== activeZoneSlug);
+
+        if (isTransitionPending && transitionDestSlug) {
+          const capturedExistingZone = result.nextZone;
+          const capturedProposed = result.proposedNextZone;
+          const capturedIsNew = Boolean(capturedProposed);
           const fromSlug = activeZoneSlug;
-          const toSlug = capturedNextZone.slug;
+          const toSlug = transitionDestSlug;
+          const destName = transitionDestName!;
           const pid = resolvedPlayerId ?? session.playerId;
           const uname = cachedUsername ?? 'Unknown';
           const capturedSessionId = activeSessionId;
           const capturedWorldId = activeWorldId;
 
           const executeTravelFn = async () => {
+            // If this is a new zone, create it in the DB now that the player confirmed travel
+            let resolvedZone = capturedExistingZone;
+            if (capturedProposed && !resolvedZone) {
+              resolvedZone = await vedaService.saveZone({
+                worldId: capturedProposed.worldId,
+                name: capturedProposed.name,
+                slug: capturedProposed.slug,
+                description: capturedProposed.description,
+                rawContent: capturedProposed.rawContent,
+                atmosphereTags: capturedProposed.atmosphereTags,
+                discoveredById: capturedProposed.discoveredById ?? undefined,
+              });
+              io.to(`world:${capturedWorldId}`).emit('veda:update', {
+                type: 'zone',
+                data: resolvedZone,
+              });
+            }
+            if (!resolvedZone) return; // shouldn't happen
+
             regRemove(zoneRoom(capturedWorldId!, fromSlug!), socket.id);
             socket.leave(zoneRoom(capturedWorldId!, fromSlug!));
             socket.to(zoneRoom(capturedWorldId!, fromSlug!)).emit('player:moved', {
@@ -358,7 +391,7 @@ export function registerSocketHandlers(
             socket.emit('zone:presence', { zoneSlug: toSlug, players: newRoomOthers });
             regAdd(newRoom, socket.id, { playerId: pid, username: uname, characterName: cachedCharacterName });
 
-            await sessionService.updateZone(capturedSessionId!, capturedNextZone.id);
+            await sessionService.updateZone(capturedSessionId!, resolvedZone.id);
 
             socket.to(zoneRoom(capturedWorldId!, toSlug)).emit('player:joined', {
               playerId: pid,
@@ -366,13 +399,6 @@ export function registerSocketHandlers(
               characterName: cachedCharacterName,
               zoneSlug: toSlug,
             });
-
-            if (capturedIsNew) {
-              io.to(`world:${capturedWorldId}`).emit('veda:update', {
-                type: 'zone',
-                data: capturedNextZone,
-              });
-            }
 
             const newEdge = await vedaService.saveZoneEdge(capturedWorldId!, fromSlug!, toSlug);
             if (newEdge) {
@@ -382,11 +408,9 @@ export function registerSocketHandlers(
               });
             }
 
-            // Emit zone data (description, NPCs, features) to update the environment panel
-            // after the player confirms travel. Use rawContent as the description panel text;
-            // the action narration already appeared in chat as the arrival description.
+            // Emit zone description to chat + update the environment panel
             try {
-              const destFeatures = await worldFeatureService.findByZoneWithScripts(capturedNextZone.id).catch(() => []);
+              const destFeatures = await worldFeatureService.findByZoneWithScripts(resolvedZone.id).catch(() => []);
               const destFeaturesPayload = destFeatures.map(f => ({
                 id: f.id,
                 name: f.name,
@@ -396,19 +420,20 @@ export function registerSocketHandlers(
                 builtByCharacterName: (f as any).builtByCharacterName ?? null,
                 interactionTriggers: ((f as any).interactionScripts ?? []).map((s: any) => s.trigger),
               }));
-              const destNpcs = await npcService.listByZone(capturedNextZone.id).catch(() => []);
+              const destNpcs = await npcService.listByZone(resolvedZone.id).catch(() => []);
               const destNpcsPayload = destNpcs.map(n => ({
                 name: n.name,
                 disposition: n.disposition as string,
                 knownPlayer: resolvedPlayerId ? (n.knownCharacterIds as string[]).includes(resolvedPlayerId) : false,
               }));
-              const zoneDescText = WorldGeneratorService.extractPlainText(capturedNextZone.rawContent ?? '');
+              const zoneDescText = WorldGeneratorService.extractPlainText(resolvedZone.rawContent ?? '');
               socket.emit('world:narration', {
-                text: '',
+                // Show zone description in chat (same as player:move does)
+                text: zoneDescText,
                 zoneSlug: toSlug,
                 sessionId: capturedSessionId!,
                 timestamp: new Date().toISOString(),
-                atmosphereTags: capturedNextZone.atmosphereTags,
+                atmosphereTags: resolvedZone.atmosphereTags,
                 zoneNpcs: destNpcsPayload,
                 zoneDescription: zoneDescText,
                 zoneFeatures: destFeaturesPayload,
@@ -420,15 +445,16 @@ export function registerSocketHandlers(
 
           const pendingTravelId = `travel-${Date.now()}-${Math.random().toString(36).slice(2)}`;
           pendingTravels.set(pendingTravelId, {
-            destName: capturedNextZone.name,
+            destName,
             destSlug: toSlug,
             isNewZone: capturedIsNew,
+            proposedNextZone: capturedProposed,
             execute: executeTravelFn,
           });
           socket.emit('zone:travel:confirm', {
             pendingTravelId,
             sessionId: activeSessionId!,
-            destinationZoneName: capturedNextZone.name,
+            destinationZoneName: destName,
             destinationZoneSlug: toSlug,
             isNewZone: capturedIsNew,
           });
@@ -445,8 +471,9 @@ export function registerSocketHandlers(
           rishiName,
         );
 
-        // Use the final zone (after possible transition)
-        const finalZone = result.nextZone ?? result.zone;
+        // When a zone transition is pending confirmation, keep the current zone for the narration
+        // payload — the client must not update its zoneSlug until the player confirms travel.
+        const finalZone = isTransitionPending ? result.zone : (result.nextZone ?? result.zone);
 
         // Build enriched zoneNpcs payload from a fresh post-action DB query so any NPCs
         // just created by extraction (e.g. a named NPC who introduced themselves) are included.
