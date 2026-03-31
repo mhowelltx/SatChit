@@ -330,13 +330,18 @@ export default function PlayClient({ worldSlug, characterId, targetZoneSlug }: P
         return next.slice(-5);
       });
 
-      addLog({
-        type: 'narration',
-        text: payload.text,
-        timestamp: payload.timestamp,
-        suggestions: payload.suggestions,
-        mentions: payload.mentions,
-      });
+      // Only add to the chat log if there's actual text — some world:narration events
+      // carry only environment panel updates (zoneNpcs/zoneFeatures/zoneDescription)
+      // without chat content, e.g. after confirming zone travel.
+      if (payload.text) {
+        addLog({
+          type: 'narration',
+          text: payload.text,
+          timestamp: payload.timestamp,
+          suggestions: payload.suggestions,
+          mentions: payload.mentions,
+        });
+      }
     });
 
     // Actor-only: internal voice + personalized NPC speech.

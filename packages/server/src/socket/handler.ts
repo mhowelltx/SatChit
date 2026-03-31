@@ -381,6 +381,41 @@ export function registerSocketHandlers(
                 data: newEdge,
               });
             }
+
+            // Emit zone data (description, NPCs, features) to update the environment panel
+            // after the player confirms travel. Use rawContent as the description panel text;
+            // the action narration already appeared in chat as the arrival description.
+            try {
+              const destFeatures = await worldFeatureService.findByZoneWithScripts(capturedNextZone.id).catch(() => []);
+              const destFeaturesPayload = destFeatures.map(f => ({
+                id: f.id,
+                name: f.name,
+                featureType: f.featureType,
+                description: f.description,
+                narrative: (f as any).narrative ?? null,
+                builtByCharacterName: (f as any).builtByCharacterName ?? null,
+                interactionTriggers: ((f as any).interactionScripts ?? []).map((s: any) => s.trigger),
+              }));
+              const destNpcs = await npcService.listByZone(capturedNextZone.id).catch(() => []);
+              const destNpcsPayload = destNpcs.map(n => ({
+                name: n.name,
+                disposition: n.disposition as string,
+                knownPlayer: resolvedPlayerId ? (n.knownCharacterIds as string[]).includes(resolvedPlayerId) : false,
+              }));
+              const zoneDescText = WorldGeneratorService.extractPlainText(capturedNextZone.rawContent ?? '');
+              socket.emit('world:narration', {
+                text: '',
+                zoneSlug: toSlug,
+                sessionId: capturedSessionId!,
+                timestamp: new Date().toISOString(),
+                atmosphereTags: capturedNextZone.atmosphereTags,
+                zoneNpcs: destNpcsPayload,
+                zoneDescription: zoneDescText,
+                zoneFeatures: destFeaturesPayload,
+              });
+            } catch {
+              // environment panel update is best-effort
+            }
           };
 
           const pendingTravelId = `travel-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -701,6 +736,7 @@ export function registerSocketHandlers(
 
           // Check if zone exists in Veda or generate it
           let zone = await vedaService.getZone(capturedWorldId, targetSlug);
+          let entryNarration: string | null = null;
 
           if (!zone) {
             const result = await worldGenerator.processAction(
@@ -726,6 +762,11 @@ export function registerSocketHandlers(
               currentMood,
             );
             zone = result.zone;
+            // Use the entry narration (narrator segments) as chat text — separate from zone description
+            entryNarration = result.segments
+              .filter(s => s.type === 'narrator')
+              .map(s => s.text)
+              .join('\n\n') || result.narration;
             io.to(`world:${capturedWorldId}`).emit('veda:update', { type: 'zone', data: zone });
           }
 
@@ -765,15 +806,16 @@ export function registerSocketHandlers(
             }),
           );
 
-          const moveZoneText = WorldGeneratorService.extractPlainText(zone.rawContent ?? '');
+          // Zone description (rawContent) goes in the side panel; entry narration goes in the chat log
+          const zoneDescText = WorldGeneratorService.extractPlainText(zone.rawContent ?? '');
           socket.emit('world:narration', {
-            text: moveZoneText,
+            text: entryNarration ?? zoneDescText,
             zoneSlug: zone.slug,
             sessionId: capturedSessionId,
             timestamp: new Date().toISOString(),
             atmosphereTags: zone.atmosphereTags,
             zoneNpcs: moveZoneNpcsPayload,
-            zoneDescription: moveZoneText,
+            zoneDescription: zoneDescText,
             zoneFeatures: moveZoneFeaturesPayload,
           });
 
