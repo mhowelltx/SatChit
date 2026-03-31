@@ -179,7 +179,9 @@ export class WorldGeneratorService {
         name: def.name,
         slug,
         description: def.description,
-        rawContent: this.extractPlainText(def.rawContent ?? ''),
+        rawContent: typeof def.rawContent === 'string'
+          ? WorldGeneratorService.extractPlainText(def.rawContent)
+          : `A starting location in the world of ${world.name}.`,
         atmosphereTags: Array.isArray(def.atmosphereTags) ? def.atmosphereTags : [],
       });
       starterZones.push(zone);
@@ -331,19 +333,24 @@ export class WorldGeneratorService {
     };
 
     if (isNewZone) {
-      // Generate and persist new zone
+      // Generate and persist new zone using structured output to guarantee plain text (not JSON segments)
       const slug = currentZoneSlug;
       const zoneName = slug
         .split('-')
         .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
         .join(' ');
 
-      const rawContent = this.extractPlainText(await ai.generate(
-        `The player has arrived in "${zoneName}" for the first time.
-         Describe this location in vivid detail — what they see, hear, feel, and sense.
-         Make it feel like a natural part of ${world.name}.${characterContext ? `\nThe player's character is ${characterContext.name}, a ${characterContext.species ?? 'being'} — let the description acknowledge their perspective if appropriate.` : ''}`,
-        context,
-      ));
+      const zoneDescResult = await ai.generateStructured(
+        `Write a factual 2-3 sentence description of "${zoneName}", a location in the world of "${world.name}".
+         Write in third-person present tense (e.g. "The vale is...", "Mist clings to...").
+         Describe the terrain, atmosphere, and what makes this place distinct.
+         Do NOT write from a player perspective — no "you enter", no character names, no feelings.`,
+        { world: context.world },
+        { description: 'Plain text zone description in third-person present tense.' },
+      ).catch(() => null);
+      const rawContent = zoneDescResult?.description
+        ? String(zoneDescResult.description)
+        : `A location in the world of ${world.name}.`;
 
       // Generate atmosphere tags for the new zone
       const tagsResult = await ai.generateStructured(
@@ -358,7 +365,7 @@ export class WorldGeneratorService {
         worldId: world.id,
         name: zoneName,
         slug,
-        description: rawContent.split('\n')[0] ?? rawContent.slice(0, 150),
+        description: rawContent.slice(0, 150),
         rawContent,
         atmosphereTags,
         discoveredById: playerId,
@@ -554,13 +561,18 @@ export class WorldGeneratorService {
           if (existing) {
             nextZone = existing;
           } else {
-            // Generate the new zone
-            const rawContent = this.extractPlainText(await ai.generate(
-              `The player has arrived in "${candidateName}" for the first time.
-               Describe this location in vivid detail — what they see, hear, feel, and sense.
-               Make it feel like a natural part of ${world.name}.${characterContext ? `\nThe player's character is ${characterContext.name}, a ${characterContext.species ?? 'being'}.` : ''}`,
-              context,
-            ));
+            // Generate the new zone — use generateStructured to guarantee plain text (not JSON segments)
+            const zoneDescResult = await ai.generateStructured(
+              `Write a factual 2-3 sentence description of "${candidateName}", a location in the world of "${world.name}".
+               Write in third-person present tense (e.g. "The vale is...", "Ancient stones line...").
+               Describe the terrain, atmosphere, and what makes this place distinct.
+               Do NOT write from a player perspective — no "you enter", no character names, no feelings.`,
+              { world: context.world },
+              { description: 'Plain text zone description in third-person present tense.' },
+            ).catch(() => null);
+            const rawContent = zoneDescResult?.description
+              ? String(zoneDescResult.description)
+              : `A location in the world of ${world.name}.`;
             const tagsResult = await ai.generateStructured(
               `Assign 2-4 short atmosphere tags for: "${rawContent}"`,
               { world: context.world },
@@ -570,7 +582,7 @@ export class WorldGeneratorService {
               worldId: world.id,
               name: candidateName,
               slug: candidateSlug,
-              description: rawContent.split('\n')[0] ?? rawContent.slice(0, 150),
+              description: rawContent.slice(0, 150),
               rawContent,
               atmosphereTags: tagsResult?.tags?.slice(0, 4) ?? [],
               discoveredById: playerId,
