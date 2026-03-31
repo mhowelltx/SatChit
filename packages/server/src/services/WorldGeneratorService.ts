@@ -25,6 +25,16 @@ interface ZoneFeatureEntry {
 }
 
 /** Extracted feature proposal before player confirmation and DB persistence */
+export interface ProposedNextZone {
+  name: string;
+  slug: string;
+  rawContent: string;
+  description: string;
+  atmosphereTags: string[];
+  discoveredById: string | null;
+  worldId: string;
+}
+
 export interface ProposedFeature {
   name: string;
   featureType: string;
@@ -40,11 +50,11 @@ export interface ProposedFeature {
 interface ActionResult {
   narration: string;
   zone: VedaZone;
-  /** Destination zone if the narration describes the player arriving somewhere new */
+  /** Destination zone if the narration describes the player arriving at an EXISTING zone */
   nextZone?: VedaZone;
   isNewZone: boolean;
-  /** Whether nextZone was newly created during this action */
-  isNewNextZone?: boolean;
+  /** Proposed new zone not yet in DB — awaiting player travel confirmation before persisting */
+  proposedNextZone?: ProposedNextZone;
   suggestions?: string[];
   /** NPCs present in the zone during this action (name + disposition) */
   npcsPresent?: Array<{ name: string; disposition: string }>;
@@ -93,8 +103,9 @@ export class WorldGeneratorService {
    * The system prompt always instructs the AI to return JSON segments, so even
    * plain `ai.generate()` calls may return `{"segments":[...]}`. This helper
    * extracts readable prose from narrator segments when that happens.
+   * Exposed as a static method so handler.ts can sanitize rawContent read from DB.
    */
-  private extractPlainText(aiResponse: string): string {
+  static extractPlainText(aiResponse: string): string {
     try {
       const parsed = JSON.parse(aiResponse);
       if (parsed?.segments && Array.isArray(parsed.segments)) {
@@ -108,6 +119,10 @@ export class WorldGeneratorService {
       // not JSON — return as-is
     }
     return aiResponse;
+  }
+
+  private extractPlainText(aiResponse: string): string {
+    return WorldGeneratorService.extractPlainText(aiResponse);
   }
 
   /**
@@ -174,7 +189,9 @@ export class WorldGeneratorService {
         name: def.name,
         slug,
         description: def.description,
-        rawContent: this.extractPlainText(def.rawContent ?? ''),
+        rawContent: typeof def.rawContent === 'string'
+          ? WorldGeneratorService.extractPlainText(def.rawContent)
+          : `A starting location in the world of ${world.name}.`,
         atmosphereTags: Array.isArray(def.atmosphereTags) ? def.atmosphereTags : [],
       });
       starterZones.push(zone);
@@ -326,19 +343,24 @@ export class WorldGeneratorService {
     };
 
     if (isNewZone) {
-      // Generate and persist new zone
+      // Generate and persist new zone using structured output to guarantee plain text (not JSON segments)
       const slug = currentZoneSlug;
       const zoneName = slug
         .split('-')
         .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
         .join(' ');
 
-      const rawContent = this.extractPlainText(await ai.generate(
-        `The player has arrived in "${zoneName}" for the first time.
-         Describe this location in vivid detail — what they see, hear, feel, and sense.
-         Make it feel like a natural part of ${world.name}.${characterContext ? `\nThe player's character is ${characterContext.name}, a ${characterContext.species ?? 'being'} — let the description acknowledge their perspective if appropriate.` : ''}`,
-        context,
-      ));
+      const zoneDescResult = await ai.generateStructured(
+        `Write a factual 2-3 sentence description of "${zoneName}", a location in the world of "${world.name}".
+         Write in third-person present tense (e.g. "The vale is...", "Mist clings to...").
+         Describe the terrain, atmosphere, and what makes this place distinct.
+         Do NOT write from a player perspective — no "you enter", no character names, no feelings.`,
+        { world: context.world },
+        { description: 'Plain text zone description in third-person present tense.' },
+      ).catch(() => null);
+      const rawContent = zoneDescResult?.description
+        ? String(zoneDescResult.description)
+        : `A location in the world of ${world.name}.`;
 
       // Generate atmosphere tags for the new zone
       const tagsResult = await ai.generateStructured(
@@ -353,7 +375,7 @@ export class WorldGeneratorService {
         worldId: world.id,
         name: zoneName,
         slug,
-        description: rawContent.split('\n')[0] ?? rawContent.slice(0, 150),
+        description: rawContent.slice(0, 150),
         rawContent,
         atmosphereTags,
         discoveredById: playerId,
@@ -521,7 +543,7 @@ export class WorldGeneratorService {
 
     // Best-effort: detect zone transition from narration
     let nextZone: VedaZone | undefined;
-    let isNewNextZone = false;
+    let proposedNextZone: ProposedNextZone | undefined;
     try {
       const existingFeatureNames = featuresInZone.map(f => f.name);
       const featureExclusionLine = existingFeatureNames.length > 0
@@ -547,30 +569,36 @@ export class WorldGeneratorService {
         if (candidateSlug && candidateSlug !== zone!.slug) {
           const existing = await this.vedaService.getZone(world.id, candidateSlug);
           if (existing) {
+            // Existing zone: resolve immediately (no DB write needed)
             nextZone = existing;
           } else {
-            // Generate the new zone
-            const rawContent = this.extractPlainText(await ai.generate(
-              `The player has arrived in "${candidateName}" for the first time.
-               Describe this location in vivid detail — what they see, hear, feel, and sense.
-               Make it feel like a natural part of ${world.name}.${characterContext ? `\nThe player's character is ${characterContext.name}, a ${characterContext.species ?? 'being'}.` : ''}`,
-              context,
-            ));
+            // New zone: generate description but do NOT persist yet.
+            // The zone is only created in the DB when the player confirms travel.
+            const zoneDescResult = await ai.generateStructured(
+              `Write a factual 2-3 sentence description of "${candidateName}", a location in the world of "${world.name}".
+               Write in third-person present tense (e.g. "The vale is...", "Ancient stones line...").
+               Describe the terrain, atmosphere, and what makes this place distinct.
+               Do NOT write from a player perspective — no "you enter", no character names, no feelings.`,
+              { world: context.world },
+              { description: 'Plain text zone description in third-person present tense.' },
+            ).catch(() => null);
+            const rawContent = zoneDescResult?.description
+              ? String(zoneDescResult.description)
+              : `A location in the world of ${world.name}.`;
             const tagsResult = await ai.generateStructured(
               `Assign 2-4 short atmosphere tags for: "${rawContent}"`,
               { world: context.world },
               { tags: ['tag'] },
             ).catch(() => null);
-            nextZone = await this.vedaService.saveZone({
-              worldId: world.id,
+            proposedNextZone = {
               name: candidateName,
               slug: candidateSlug,
-              description: rawContent.split('\n')[0] ?? rawContent.slice(0, 150),
               rawContent,
+              description: rawContent.slice(0, 150),
               atmosphereTags: tagsResult?.tags?.slice(0, 4) ?? [],
-              discoveredById: playerId,
-            });
-            isNewNextZone = true;
+              discoveredById: playerId ?? null,
+              worldId: world.id,
+            };
           }
         }
       }
@@ -578,9 +606,8 @@ export class WorldGeneratorService {
       // Zone transition detection is best-effort
     }
 
-    // Fetch zone features for the final zone (post-transition if applicable) for environment panel
-    const finalZoneForFeatures = nextZone ?? zone!;
-    const finalZoneFeatures = await this.worldFeatureService.findByZoneWithScripts(finalZoneForFeatures.id).catch(() => []);
+    // Features are only fetched for the current zone — the proposed next zone doesn't exist yet
+    const finalZoneFeatures = await this.worldFeatureService.findByZoneWithScripts(zone!.id).catch(() => []);
     const zoneFeaturesPayload: ZoneFeatureEntry[] = finalZoneFeatures.map((f) => ({
       id: f.id,
       name: f.name,
@@ -596,7 +623,7 @@ export class WorldGeneratorService {
       zone: zone!,
       nextZone,
       isNewZone,
-      isNewNextZone,
+      proposedNextZone,
       suggestions,
       npcsPresent: npcsInZone.map((n) => ({ name: n.name, disposition: n.disposition as string })),
       npcRelationshipScores: npcRelationships,
@@ -604,7 +631,10 @@ export class WorldGeneratorService {
       nextMood,
       ...(proposedFeature ? { proposedFeature } : {}),
       transientNPCsInZone: updatedTransientNPCs,
-      zoneDescription: nextZone?.rawContent ?? (isNewZone ? zone?.rawContent : undefined),
+      // Only include zone description for the CURRENT zone — don't leak next zone before confirmation
+      zoneDescription: (isNewZone && zone?.rawContent)
+        ? WorldGeneratorService.extractPlainText(zone.rawContent)
+        : undefined,
       segments,
       zoneFeatures: zoneFeaturesPayload,
       ...(karmaUpdate ? { karmaUpdate } : {}),
